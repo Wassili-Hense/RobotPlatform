@@ -13,18 +13,32 @@ float _uint_to_float(uint16_t x, float x_min, float x_max){
 }
 
 int status_cb(uint32_t identifier, uint8_t length, uint8_t *data){
-    float position = _uint_to_float((uint16_t)data[1] | data[0] << 8, POS_MIN, POS_MAX);
-    float speed = _uint_to_float((uint16_t)data[3] | data[2] << 8, V_MIN, V_MAX);
-    float torque = _uint_to_float((uint16_t)data[5] | data[4] << 8, T_MIN, T_MAX);
-    float temperature = (float)(data[7] | data[6] << 8)/10.0f;
-    Serial.printf("POS:%f V:%f T:%f temp:%f\n", position, speed, torque, temperature);
-
+  uint8_t fault = (identifier>>16) & 0x3F; 
+  if(fault!=0){
+    Serial.print("!");
+    Serial.println(fault, HEX);
+  }
+  uint8_t mode = (identifier>>22) & 0x03;
+  float position = _uint_to_float((uint16_t)data[1] | data[0] << 8, POS_MIN, POS_MAX);
+  float speed = _uint_to_float((uint16_t)data[3] | data[2] << 8, V_MIN, V_MAX);
+  float torque = _uint_to_float((uint16_t)data[5] | data[4] << 8, T_MIN, T_MAX);
+  float temperature = (float)(data[7] | data[6] << 8)/10.0f;
+  Serial.printf("M:%d, P:%f, V:%f, F:%f, T:%f\n", mode, position, speed, torque, temperature);
+  return 0;
+}
+int fault_cb(uint32_t identifier, uint8_t length, uint8_t *data){
+  Serial.print("!!");
+  for(int i = 7; i>=0; i--){
+    Serial.print(data[i], HEX);
+  }
+  Serial.println();
   return 0;
 }
 
 void setup() {
   Serial.begin(115200);
   twai.Subscribe((CMD_REQUEST<<24) |(((uint32_t)CYBERGEAR_CAN_ID)<<8), 0x1F00FF00, status_cb);
+  twai.Subscribe((CMD_FEEDBACK<<24) |(((uint32_t)CYBERGEAR_CAN_ID)<<8), 0x1F00FF00, fault_cb);
 }
 
 void send_can_package(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data){
@@ -33,13 +47,12 @@ void send_can_package(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t l
 }
 void request_status() {
     uint8_t data[8] = {0x00};
-    send_can_package(CYBERGEAR_CAN_ID, CMD_GET_STATUS, MASTER_CAN_ID, 8, data);
+    send_can_package(CYBERGEAR_CAN_ID, CMD_REQUEST, MASTER_CAN_ID, 8, data);
 }  
 
 void loop() {
   int err = twai.Tick();
   if(err!=0){
-    Serial.println();
     Serial.print("$");
     Serial.println(err);
     delay(1000);
