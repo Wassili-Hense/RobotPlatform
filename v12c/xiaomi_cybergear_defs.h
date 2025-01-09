@@ -1,3 +1,4 @@
+
 #ifndef XIAOMI_CYBERGEAR_DEFS_H
 #define XIAOMI_CYBERGEAR_DEFS_H
 
@@ -29,11 +30,8 @@
 #define MODE_SPEED                    0x02
 #define MODE_CURRENT                  0x03
 
-//#define POS_MIN                   -12.5f
-//#define POS_MAX                    12.5f
-#define POS_MIN                    -2.0f
+#define POS_MAX                    12.5f
 #define POS_MAX                     2.0f
-#define V_MIN                     -30.0f
 #define V_MAX                      30.0f
 #define KP_MIN                      0.0f
 #define KP_MAX                    500.0f
@@ -41,9 +39,7 @@
 #define KI_MAX                     10.0f
 #define KD_MIN                      0.0f
 #define KD_MAX                      5.0f
-#define T_MIN                     -12.0f
 #define T_MAX                      12.0f
-#define I_MIN                     -27.0f
 #define I_MAX                      27.0f
 #define CURRENT_FILTER_GAIN_MIN     0.0f
 #define CURRENT_FILTER_GAIN_MAX     1.0f
@@ -52,6 +48,5 @@
 #define RET_CYBERGEAR_MSG_NOT_AVAIL   0x01
 #define RET_CYBERGEAR_INVALID_CAN_ID  0x02
 #define RET_CYBERGEAR_INVALID_PACKET  0x03
-
 
 #endif // XIAOMI_CYBERGEAR_DEFS_H

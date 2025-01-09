@@ -4,11 +4,11 @@
 #ifndef TWAI_H
 #define TWAI_H
 
-typedef int(*TWAI_Callback)(uint32_t identifier, uint8_t length, uint8_t *data);
+//typedef int(*TWAI_Callback)(uint32_t identifier, uint8_t length, uint8_t *data);
 
 class TWAI_Sub{
   public:
-    TWAI_Sub(uint32_t val, uint32_t mask, TWAI_Callback cb);
+    TWAI_Sub(uint32_t val, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb);
     int Do(uint32_t identifier, uint8_t length, uint8_t *data);
 
     TWAI_Sub *next(){ return _next;}
@@ -17,7 +17,7 @@ class TWAI_Sub{
   private:
     uint32_t _value;
     uint32_t _mask;
-    TWAI_Callback _cb;
+    std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> _cb;
     TWAI_Sub *_next = nullptr;
 };
 
@@ -35,11 +35,12 @@ class TWAI{
     // -7 - Error has occurred on the bus
     // -8 - The transmission failed
     int Tick();
-    void Subscribe(uint32_t value, uint32_t mask, TWAI_Callback cb);
+    void Subscribe(uint32_t value, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb);
     //  0 - Ok
     // -9 - Failed to queue message for transmission
     int Send(uint32_t identifier, uint8_t length, uint8_t *data);
-    bool TxEmpty(){ return _tx_empty; }
+    // Ready to send
+    bool RTS(){ return _rts; }
 
   private:
     uint8_t _rx_pin;
@@ -48,7 +49,7 @@ class TWAI{
     TWAI_Sub *_cbHead;
     TWAI_Sub *_cbTail;
 
-    bool _tx_empty;
+    bool _rts;
 
     int Init();
 };
