@@ -29,10 +29,12 @@ class Cybergear{
   // -1 - unknown parameter
   int SetParameter(Cybergear_parameter addr, float value);
   int Command(float target, float speed, float torque, float kp, float kd);
+  int SetZero();
   //  1 - Status Updated
   int Tick();
   uint8_t GetMotorStatus(){ return _motorStatus; }
   int ClearFault();
+  int SendFloat(uint16_t addr, float value);
 
   private:
   TWAI *_twai;
@@ -50,7 +52,6 @@ class Cybergear{
   int FaultCB(uint32_t identifier, uint8_t length, uint8_t *data);
 
   int SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data);
-  int SendFloat(uint16_t addr, float value);
 };
 
 #endif // XIAOMI_CYBERGEAR_H

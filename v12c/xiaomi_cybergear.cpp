@@ -24,10 +24,7 @@ uint16_t float2ushort(float x, float min, float max){
 }
 
 int findByAddr(std::vector<std::tuple<uint16_t, float>> vec, uint16_t addr){
-  int i;
-  for(i=0; i<vec.size(); i++){
-    if(std::get<0>(vec[i])==addr) return i;
-  }
+  for(int i=0; i<vec.size(); i++) if(std::get<0>(vec[i])==addr) return i;
   return -1;
 }
 
@@ -96,27 +93,36 @@ int Cybergear::Command(float position, float speed, float torque, float kp, floa
   tmp = float2ushort(torque, -T_MAX, T_MAX);
   return SendRaw(_addr, CMD_CONTROL, tmp, 8, data);
 }
-
-int Cybergear::Tick() {
-  uint32_t cur_t = millis();
-
-  if((cur_t-_to >= STATUS_PERIODE_MS) && _twai->RTS()){
-    _to = cur_t;
-    _waitUpdate = 0;
+int Cybergear::SetZero(){
     uint8_t data[8] = {0x00};
-    int r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
-    if(r!=0) return r;
-  } else if(_runMode>=0 && (_motorStatus & 0xC0)!=0x80 && _twai->RTS()){
-    if(_paramIdx < _parameters.size()){
-      uint16_t addr;
-      float value;
-      std::tie(addr, value)=_parameters.at(_paramIdx);
-      _paramIdx++;
-      int r = SendFloat(addr, value);
-      if(r!=0) return r;
-    } else {
+    data[0]=1;
+    return SendRaw(_addr, CMD_SET_MECH_POSITION_TO_ZERO, MASTER_CAN_ID, 8, data);
+}
+int Cybergear::Tick() {
+  if(_twai->RTS()){
+    uint32_t cur_t = millis();
+    if((cur_t-_to >= STATUS_PERIODE_MS)){
+      _to = cur_t;
+      _waitUpdate = 0;
       uint8_t data[8] = {0x00};
-      int r = SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
+      int r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
+      if(r!=0) return r;
+    } else if(_runMode>=0 && (_motorStatus & 0xC0)!=0x80){
+      if(_paramIdx < _parameters.size()){
+        uint16_t addr;
+        float value;
+        std::tie(addr, value)=_parameters.at(_paramIdx);
+        _paramIdx++;
+        int r = SendFloat(addr, value);
+        if(r!=0) return r;
+      } else {
+        uint8_t data[8] = {0x00};
+        int r = SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
+        if(r!=0) return r;
+      }
+    } else if(_runMode<0 && (_motorStatus & 0xC0)==0x80){
+      uint8_t data[8] = {0x00};
+      int r = SendRaw(_addr, CMD_STOP, MASTER_CAN_ID, 8, data);
       if(r!=0) return r;
     }
   }
@@ -135,6 +141,9 @@ int Cybergear::ClearFault(){
 }
 
 int Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
+  if((identifier&0xC00000)!=0x800000 && (_motorStatus & 0xC0)==0x80){
+    _paramIdx = 0;
+  }
   _motorStatus = (uint8_t)(identifier>>16);
   position = ushort2float((uint16_t)data[1] | data[0] << 8, -POS_MAX, POS_MAX);
   speed = ushort2float((uint16_t)data[3] | data[2] << 8, -V_MAX, V_MAX);

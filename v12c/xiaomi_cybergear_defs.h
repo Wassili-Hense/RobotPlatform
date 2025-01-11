@@ -1,7 +1,7 @@
 
 #ifndef XIAOMI_CYBERGEAR_DEFS_H
 #define XIAOMI_CYBERGEAR_DEFS_H
-
+// https://openelab.io/blogs/learn/xiaomi-cybergear-motor-driver
 #define CMD_DEVICE_ID                 0x00
 #define CMD_CONTROL                   0x01
 #define CMD_REQUEST                   0x02
