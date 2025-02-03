@@ -1,12 +1,14 @@
 #include <functional>
+#include <limits>
 #include <map>
 #include <tuple>
-#include <HardwareSerial.h>
+#include <esp32-hal.h>
+//#include <HardwareSerial.h>
 #include "xiaomi_cybergear_defs.h"
 #include "xiaomi_cybergear.h"
 
 uint8_t MASTER_CAN_ID = 0x00;
-uint32_t STATUS_PERIODE_MS = 1000; 
+uint32_t STATUS_PERIODE_MS = 50; 
 
 std::map<uint16_t, std::tuple<float, float>> CG_Parameters = {
   {ADDR_LIMIT_TORQUE, {0, T_MAX}},
@@ -154,12 +156,12 @@ int Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
 }
 
 int Cybergear::FaultCB(uint32_t identifier, uint8_t length, uint8_t *data){
-  Serial.print("!!");
-  for(int i = length-1; i>=0; i--){
-    Serial.print(data[i]>>4, HEX);
-    Serial.print(data[i]&0x0F, HEX);
-  }
-  Serial.println();
+  //Serial.print("!!");
+  //for(int i = length-1; i>=0; i--){
+  //  Serial.print(data[i]>>4, HEX);
+  //  Serial.print(data[i]&0x0F, HEX);
+  //}
+  //Serial.println();
   return 0;
 }
 
@@ -175,6 +177,6 @@ int Cybergear::SendFloat(uint16_t addr, float value){
 
    memcpy(&data[4], &value, 4);
    int r=SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
-   Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
+   //Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
    return r;
 }
