@@ -11,6 +11,7 @@ uint8_t MASTER_CAN_ID = 0x00;
 uint32_t STATUS_PERIODE_MS = 50; 
 
 std::map<uint16_t, std::tuple<float, float>> CG_Parameters = {
+  {ADDR_SPEED_REF, {-V_MAX, V_MAX}},
   {ADDR_LIMIT_TORQUE, {0, T_MAX}},
   {ADDR_LIMIT_SPEED, {0, V_MAX}},
   {ADDR_LIMIT_CURRENT, {0, I_MAX}}
@@ -171,11 +172,13 @@ int Cybergear::SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t 
 }
 
 int Cybergear::SendFloat(uint16_t addr, float value){
-   uint8_t data[8] = {0x00};
+   uint8_t data[8];
    data[0] = addr & 0x00FF;
    data[1] = addr >> 8;
-
+   data[2] = 0;
+   data[3] = 0;
    memcpy(&data[4], &value, 4);
+
    int r=SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
    //Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
    return r;

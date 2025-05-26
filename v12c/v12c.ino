@@ -18,16 +18,24 @@ float p_set, f_set=2;
 void Command(char cmd, float val){
     int r;
     switch(cmd){
+    case 'm':
+      r=cg.SetRunMode((int8_t)val);
     case 'p':
       r=cg.Command(-val, 0, 0, 25, 3);
       p_set = val;
       break;
+    case 'c':
+      r=cg.SendFloat(0x7006, val);
+      break;
     case 'v':
-      r=cg.SendFloat(0x7017, val);
+      r=cg.SendFloat(0x700A, val);
       break;
     case 't':
       r=cg.SendFloat(0x700B, val);
       f_set=val;
+      break;
+    case 'i':
+      r=cg.SendFloat(0x7018, val);
       break;
     case 'r':
       cg.SetZero();
@@ -37,8 +45,7 @@ void Command(char cmd, float val){
       r=-33;
       break;
     }
-    //Serial.print("$");Serial.print(msg.cmd);Serial.print("$");Serial.print(msg.val);
-    //Serial.print("=");Serial.println(r);
+    //Serial.print(cmd);Serial.print("$");Serial.print(val);Serial.print("=");Serial.println(r);
 }
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -107,8 +114,8 @@ void loop() {
     //if(st&0x08) Serial.println("Fault: encoder");
     //if(st&0x10) Serial.println("Fault: Hall");
     //if(st&0x20) Serial.println("Not calibrated");
-    //Serial.printf("M:%x, P:%f, V:%f, F:%f, T:%f\n", st>>6, cg.position, cg.speed, cg.torque, cg.temperature);
-    Serial.printf("Position:%f:%f, Torque:%f:%f:%f\n", -cg.position, p_set, -cg.torque, -f_set, f_set);
+    Serial.printf("M:%x, P:%f, V:%f, F:%f, T:%f\n", st>>6, cg.position, cg.speed, cg.torque, cg.temperature);
+    //Serial.printf("Position:%f:%f, Torque:%f:%f:%f\n", -cg.position, p_set, -cg.torque, -f_set, f_set);
   } else {
     Terminal();
   }

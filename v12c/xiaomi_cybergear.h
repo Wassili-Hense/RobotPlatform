@@ -7,6 +7,7 @@
 #define XIAOMI_CYBERGEAR_H
 
 enum Cybergear_parameter {
+  Cybergear_parameter_RPM_Command = 0x700A,
   Cybergear_parameter_Limit_Torque = 0x700B,
   Cybergear_parameter_Limit_Speed = 0x7017,
   Cybergear_parameter_Limit_Current = 0x7018
