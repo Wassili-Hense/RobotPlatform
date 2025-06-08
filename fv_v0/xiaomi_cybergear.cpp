@@ -180,6 +180,6 @@ int Cybergear::SendFloat(uint16_t addr, float value){
    memcpy(&data[4], &value, 4);
 
    int r=SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
-   Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
+   //Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
    return r;
 }

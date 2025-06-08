@@ -2,8 +2,8 @@
 #include <WiFi.h>
 #include "xiaomi_cybergear.h"
 
-TWAI twai = TWAI(/*RX_PIN=*/4, /*TX_PIN=*/5);
-Cybergear cg = Cybergear(&twai, 0x7F);
+TWAI twai = TWAI(/*RX_PIN=*/26, /*TX_PIN=*/25);
+Cybergear cg = Cybergear(&twai, 0x03);
 
 char _rxBuffer[17];
 uint8_t _rxIdx;
@@ -114,7 +114,7 @@ void loop() {
     //if(st&0x08) Serial.println("Fault: encoder");
     //if(st&0x10) Serial.println("Fault: Hall");
     //if(st&0x20) Serial.println("Not calibrated");
-    Serial.printf("M:%x, P:%f, V:%f, F:%f, T:%f\n", st>>6, cg.position, cg.speed, cg.torque, cg.temperature);
+    //Serial.printf("M:%x, P:%f, V:%f, F:%f, T:%f\n", st>>6, cg.position, cg.speed, cg.torque, cg.temperature);
     //Serial.printf("Position:%f:%f, Torque:%f:%f:%f\n", -cg.position, p_set, -cg.torque, -f_set, f_set);
   } else {
     Terminal();
