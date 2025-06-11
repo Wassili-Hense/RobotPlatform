@@ -1,18 +1,8 @@
 #include <cstdint>
-#include <tuple>
-#include <vector>
 #include "TWAI.h"
 
 #ifndef XIAOMI_CYBERGEAR_H
 #define XIAOMI_CYBERGEAR_H
-
-enum Cybergear_parameter {
-  Cybergear_parameter_Limit_Torque = 0x700B,
-  Cybergear_parameter_Limit_Speed = 0x7017,
-  Cybergear_parameter_Limit_Current = 0x7018,
-  Cybergear_parameter_Speed_kp = 0x701F,
-  Cybergear_parameter_Speed_ki = 0x7020
-};
 
 class Cybergear{
   public:
@@ -28,8 +18,6 @@ class Cybergear{
   //  2 - Velocity Mode
   //  3 - Current Mode
   int SetRunMode(int8_t run_mode);
-  // -1 - unknown parameter
-  int SetParameter(Cybergear_parameter addr, float value);
   int Command(float target, float speed, float torque, float kp, float kd);
   int SetZero();
   //  1 - Status Updated
@@ -44,11 +32,9 @@ class Cybergear{
 
   int8_t _runMode; // ADDR_RUN_MODE or -1
   uint8_t _motorStatus;
-  uint8_t _paramIdx;
 
   uint32_t _to;
   int _waitUpdate;
-  std::vector<std::tuple<uint16_t, float>> _parameters;
 
   int StatusCB(uint32_t identifier, uint8_t length, uint8_t *data);
   int FaultCB(uint32_t identifier, uint8_t length, uint8_t *data);

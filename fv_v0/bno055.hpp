@@ -7,11 +7,11 @@ class BNO055 {
   public:
   BNO055(TwoWire *wire, bool addr = true);
   int8_t Initialize();
-  int8_t Read();
 
-  int16_t heading;
-  int16_t roll;
-  int16_t pitch;
+  uint8_t GetIntSta();
+  int16_t GetHeading();
+  int16_t GetRoll();
+  int16_t GetPitch();
 
   private:
   TwoWire *_wire;

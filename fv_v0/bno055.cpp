@@ -21,14 +21,15 @@ int8_t BNO055::Initialize(){
   if(st==5) return 0;
   return ReadRegister(BNO055_SYS_ERR_ADDR);
 }
-
-int8_t BNO055::Read(){
-  heading = ReadRegister16(BNO055_EULER_H_LSB_ADDR);
-  roll = ReadRegister16(BNO055_EULER_R_LSB_ADDR);
-  pitch = ReadRegister16(BNO055_EULER_P_LSB_ADDR);
-  return 0;
+int16_t BNO055::GetHeading(){
+  return ReadRegister16(BNO055_EULER_H_LSB_ADDR);
 }
-
+int16_t BNO055::GetRoll(){
+  return ReadRegister16(BNO055_EULER_R_LSB_ADDR);
+}
+int16_t BNO055::GetPitch(){
+  return ReadRegister16(BNO055_EULER_P_LSB_ADDR);
+}
 /***** Private Functions *****/
 
 inline void BNO055::WritePhase(uint16_t regaddr, bool et){

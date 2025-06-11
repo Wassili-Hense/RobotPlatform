@@ -10,13 +10,6 @@
 uint8_t MASTER_CAN_ID = 0x00;
 uint32_t STATUS_PERIODE_MS = 50; 
 
-std::map<uint16_t, std::tuple<float, float>> CG_Parameters = {
-  {ADDR_SPEED_REF, {-V_MAX, V_MAX}},
-  {ADDR_LIMIT_TORQUE, {0, T_MAX}},
-  {ADDR_LIMIT_SPEED, {0, V_MAX}},
-  {ADDR_LIMIT_CURRENT, {0, I_MAX}}
-};
-
 float ushort2float(uint16_t x, float min, float max){
   return (float) x / std::numeric_limits<uint16_t>::max() * (max - min) + min;
 }
@@ -38,9 +31,9 @@ Cybergear::Cybergear(TWAI *twai, uint8_t addr){
   _addr=addr;
   _motorStatus = 0;
   _runMode = -1;
-  _paramIdx=0;
   _twai->Subscribe((CMD_REQUEST<<24) | (((uint32_t)_addr)<<8), 0x1F00FF00, std::bind(&Cybergear::StatusCB, this, _1, _2, _3));
   _twai->Subscribe((CMD_FEEDBACK<<24) | (((uint32_t)_addr)<<8), 0x1F00FF00, std::bind(&Cybergear::FaultCB, this, _1, _2, _3));
+  uint8_t data[8] = {0x00};
 }
 
 int Cybergear::SetRunMode(int8_t run_mode){
@@ -54,24 +47,6 @@ int Cybergear::SetRunMode(int8_t run_mode){
   data[1] = ADDR_RUN_MODE >> 8;
   data[4] = _runMode;
   return SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
-}
-
-int Cybergear::SetParameter(Cybergear_parameter pAddr, float value){
-  uint16_t addr = (uint16_t)pAddr;
-  if(!CG_Parameters.contains(addr)) return -10;
-  float min, max;
-  std::tie(min, max) = CG_Parameters[addr];
-  if(value<min) value = min;
-  if(value>max) value = max;
-
-  int i = findByAddr(_parameters, addr);
-  if(i<0){
-    _parameters.push_back(std::tuple<uint16_t, float>{addr, value});
-    if(_twai->RTS()) _paramIdx = _parameters.size();
-  } else{
-    _parameters.at(i) = std::tuple<uint16_t, float>{addr, value};
-  }
-  return SendFloat(addr, value);
 }
 
 int Cybergear::Command(float position, float speed, float torque, float kp, float kd){
@@ -104,30 +79,20 @@ int Cybergear::SetZero(){
 int Cybergear::Tick() {
   if(_twai->RTS()){
     uint32_t cur_t = millis();
+    int r;
     if((cur_t-_to >= STATUS_PERIODE_MS)){
       _to = cur_t;
       _waitUpdate = 0;
       uint8_t data[8] = {0x00};
-      int r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
-      if(r!=0) return r;
-    } else if(_runMode>=0 && (_motorStatus & 0xC0)!=0x80){
-      if(_paramIdx < _parameters.size()){
-        uint16_t addr;
-        float value;
-        std::tie(addr, value)=_parameters.at(_paramIdx);
-        _paramIdx++;
-        int r = SendFloat(addr, value);
-        if(r!=0) return r;
-      } else {
-        uint8_t data[8] = {0x00};
-        int r = SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
-        if(r!=0) return r;
-      }
-    } else if(_runMode<0 && (_motorStatus & 0xC0)==0x80){
-      uint8_t data[8] = {0x00};
-      int r = SendRaw(_addr, CMD_STOP, MASTER_CAN_ID, 8, data);
+      r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
       if(r!=0) return r;
     }
+    //uint8_t data[] = {ADDR_RUN_MODE & 0x00F, ADDR_RUN_MODE >> 8, 0x00, 0x00, _runMode, 0x00, 0x00, 0x00};
+    //r = SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
+    //uint8_t data[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    //r = SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
+    //uint8_t data[8] = {0x00};
+    //r = SendRaw(_addr, CMD_STOP, MASTER_CAN_ID, 8, data);
   }
 
   if(_waitUpdate==1){
@@ -144,9 +109,6 @@ int Cybergear::ClearFault(){
 }
 
 int Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
-  if((identifier&0xC00000)!=0x800000 && (_motorStatus & 0xC0)==0x80){
-    _paramIdx = 0;
-  }
   _motorStatus = (uint8_t)(identifier>>16);
   position = ushort2float((uint16_t)data[1] | data[0] << 8, -POS_MAX, POS_MAX);
   speed = ushort2float((uint16_t)data[3] | data[2] << 8, -V_MAX, V_MAX);
@@ -180,6 +142,6 @@ int Cybergear::SendFloat(uint16_t addr, float value){
    memcpy(&data[4], &value, 4);
 
    int r=SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
-   //Serial.printf("sendFloat(%x, %f) - %d\n", addr, value, r);
+   //Serial.printf("[%x]sendFloat(%x, %f) - %d\n",_addr, addr, value, r);
    return r;
 }

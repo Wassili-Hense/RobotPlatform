@@ -9,7 +9,7 @@ TWAI::~TWAI(){
   if (twai_stop() != ESP_OK) return;
   twai_driver_uninstall();
 }
-int TWAI::Tick(){
+int8_t TWAI::Tick(){
   twai_status_info_t twai_status;
   if(twai_get_status_info(&twai_status)!= ESP_OK || twai_status.state != TWAI_STATE_RUNNING){
     _rts=false;
@@ -56,7 +56,7 @@ void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int(uint32_t i
     _cbTail = h;
   }
 }
-int TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
+int8_t TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
   _rts = false;
   twai_message_t message;
   message.extd = 1; //enable extended frame format
@@ -67,7 +67,7 @@ int TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
   }
   return (twai_transmit(&message, 0) != ESP_OK)?-9:0;
 }
-int TWAI::Init(){
+int8_t TWAI::Init(){
   // Initialize configuration structures using macro initializers
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)_tx_pin, (gpio_num_t)_rx_pin, TWAI_MODE_NORMAL);
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
@@ -92,7 +92,7 @@ TWAI_Sub::TWAI_Sub(uint32_t value, uint32_t mask, std::function<int(uint32_t ide
   _cb=cb;
 }
 
-int TWAI_Sub::Do(uint32_t identifier, uint8_t length, uint8_t *data){
+int8_t TWAI_Sub::Do(uint32_t identifier, uint8_t length, uint8_t *data){
   if(((identifier ^ _value)&_mask)!=0){
     return 0;
   }

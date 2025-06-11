@@ -24,6 +24,8 @@
 #define ADDR_POSITION_REF           0x7016
 #define ADDR_LIMIT_SPEED            0x7017
 #define ADDR_LIMIT_CURRENT          0x7018
+#define ADDR_SPEED_KP               0x701F
+#define ADDR_SPEED_KI               0x7020
 
 #define MODE_MOTION                   0x00
 #define MODE_POSITION                 0x01

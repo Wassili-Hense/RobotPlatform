@@ -9,7 +9,7 @@
 class TWAI_Sub{
   public:
     TWAI_Sub(uint32_t val, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb);
-    int Do(uint32_t identifier, uint8_t length, uint8_t *data);
+    int8_t Do(uint32_t identifier, uint8_t length, uint8_t *data);
 
     TWAI_Sub *next(){ return _next;}
     void next(TWAI_Sub *r){ _next = r; }
@@ -34,11 +34,11 @@ class TWAI{
     // -6 - Twai controller has become error passive
     // -7 - Error has occurred on the bus
     // -8 - The transmission failed
-    int Tick();
+    int8_t Tick();
     void Subscribe(uint32_t value, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb);
     //  0 - Ok
     // -9 - Failed to queue message for transmission
-    int Send(uint32_t identifier, uint8_t length, uint8_t *data);
+    int8_t Send(uint32_t identifier, uint8_t length, uint8_t *data);
     // Ready to send
     bool RTS(){ return _rts; }
 
@@ -51,7 +51,7 @@ class TWAI{
 
     bool _rts;
 
-    int Init();
+    int8_t Init();
 };
 
 #endif // TWAI_H
