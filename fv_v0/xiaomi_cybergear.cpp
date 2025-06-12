@@ -1,7 +1,5 @@
 #include <functional>
 #include <limits>
-#include <map>
-#include <tuple>
 #include <esp32-hal.h>
 #include <HardwareSerial.h>
 #include "xiaomi_cybergear_defs.h"
@@ -33,10 +31,9 @@ Cybergear::Cybergear(TWAI *twai, uint8_t addr){
   _runMode = -1;
   _twai->Subscribe((CMD_REQUEST<<24) | (((uint32_t)_addr)<<8), 0x1F00FF00, std::bind(&Cybergear::StatusCB, this, _1, _2, _3));
   _twai->Subscribe((CMD_FEEDBACK<<24) | (((uint32_t)_addr)<<8), 0x1F00FF00, std::bind(&Cybergear::FaultCB, this, _1, _2, _3));
-  uint8_t data[8] = {0x00};
 }
 
-int Cybergear::SetRunMode(int8_t run_mode){
+int8_t Cybergear::SetRunMode(int8_t run_mode){
   _runMode = run_mode;
   if(run_mode<0){
     uint8_t data[8] = {0x00};
@@ -49,7 +46,12 @@ int Cybergear::SetRunMode(int8_t run_mode){
   return SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
 }
 
-int Cybergear::Command(float position, float speed, float torque, float kp, float kd){
+int8_t Cybergear::Enable(){
+    uint8_t data[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    return SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
+}
+
+int8_t Cybergear::Command(float position, float speed, float torque, float kp, float kd){
   uint8_t data[8] = {0x00};
 
   uint16_t tmp = float2ushort(position, -POS_MAX, POS_MAX);
@@ -71,29 +73,27 @@ int Cybergear::Command(float position, float speed, float torque, float kp, floa
   tmp = float2ushort(torque, -T_MAX, T_MAX);
   return SendRaw(_addr, CMD_CONTROL, tmp, 8, data);
 }
-int Cybergear::SetZero(){
+int8_t Cybergear::SetZero(){
     uint8_t data[8] = {0x00};
     data[0]=1;
     return SendRaw(_addr, CMD_SET_MECH_POSITION_TO_ZERO, MASTER_CAN_ID, 8, data);
 }
-int Cybergear::Tick() {
-  if(_twai->RTS()){
-    uint32_t cur_t = millis();
-    int r;
-    if((cur_t-_to >= STATUS_PERIODE_MS)){
-      _to = cur_t;
-      _waitUpdate = 0;
-      uint8_t data[8] = {0x00};
-      r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
-      if(r!=0) return r;
-    }
+int8_t Cybergear::Tick() {
+  uint32_t cur_t = millis();
+  int r;
+  if((cur_t-_to >= STATUS_PERIODE_MS)){
+    _to = cur_t;
+    _waitUpdate = 0;
+    uint8_t data[8] = {0x00};
+    r=SendRaw(_addr, CMD_REQUEST, MASTER_CAN_ID, 8, data);
+    if(r!=0) return r;
+  }
     //uint8_t data[] = {ADDR_RUN_MODE & 0x00F, ADDR_RUN_MODE >> 8, 0x00, 0x00, _runMode, 0x00, 0x00, 0x00};
     //r = SendRaw(_addr, CMD_RAM_WRITE, MASTER_CAN_ID, 8, data);
     //uint8_t data[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     //r = SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
     //uint8_t data[8] = {0x00};
     //r = SendRaw(_addr, CMD_STOP, MASTER_CAN_ID, 8, data);
-  }
 
   if(_waitUpdate==1){
     _waitUpdate=2;
@@ -102,13 +102,13 @@ int Cybergear::Tick() {
   return 0;
 }
 
-int Cybergear::ClearFault(){
+int8_t Cybergear::ClearFault(){
   _to=0;
   uint8_t data[8] = {1, 0, 0, 0, 0, 0, 0, 0};
   return SendRaw(_addr, (_motorStatus&0xC0)==0x80?CMD_ENABLE:CMD_STOP, MASTER_CAN_ID, 8, data);
 }
 
-int Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
+int8_t Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
   _motorStatus = (uint8_t)(identifier>>16);
   position = ushort2float((uint16_t)data[1] | data[0] << 8, -POS_MAX, POS_MAX);
   speed = ushort2float((uint16_t)data[3] | data[2] << 8, -V_MAX, V_MAX);
@@ -118,7 +118,7 @@ int Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
   return 0;
 }
 
-int Cybergear::FaultCB(uint32_t identifier, uint8_t length, uint8_t *data){
+int8_t Cybergear::FaultCB(uint32_t identifier, uint8_t length, uint8_t *data){
   Serial.print("!!");
   for(int i = length-1; i>=0; i--){
     Serial.print(data[i]>>4, HEX);
@@ -128,12 +128,12 @@ int Cybergear::FaultCB(uint32_t identifier, uint8_t length, uint8_t *data){
   return 0;
 }
 
-int Cybergear::SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data){
+int8_t Cybergear::SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data){
     uint32_t id = cmd_id << 24 | option << 8 | can_id;
     return _twai->Send(id, len, data);
 }
 
-int Cybergear::SendFloat(uint16_t addr, float value){
+int8_t Cybergear::SendFloat(uint16_t addr, float value){
    uint8_t data[8];
    data[0] = addr & 0x00FF;
    data[1] = addr >> 8;

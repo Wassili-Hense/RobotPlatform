@@ -5,14 +5,12 @@
 #define BNO_INT 16
 BNO055 bno(&Wire, false);
 TWAI twai = TWAI(/*RX_PIN=*/26, /*TX_PIN=*/25);
-//Cybergear cgL = Cybergear(&twai, 0x03);
-//Cybergear cgR = Cybergear(&twai, 0x04);
+Cybergear cgL = Cybergear(&twai, 0x03);
+Cybergear cgR = Cybergear(&twai, 0x04);
 
-uint32_t bno_to;
-//float val;
-//float kp;
+float kp;
 
-/*
+
 void Command(char cmd, float val){
     int r;
     switch(cmd){
@@ -59,12 +57,11 @@ void Terminal(){
      }
     }
   }
-}*/
+}
 
 float rollPrev;
 void setup() {
-  //val=0;
-  //kp = 0.2;
+  kp = 0.5;
   Serial.begin(115200);
   Serial.println("Start");
 
@@ -81,6 +78,8 @@ void setup() {
       delay(1000);
     }
   }while(err!=0);
+  Serial.print("bno.FwRev = ");Serial.println(bno.GetFwRev(), HEX);
+
   do{
     err=twai.Tick();
     if(err!=0){
@@ -89,10 +88,13 @@ void setup() {
       delay(1000);
     }
   }while(err!=0);
-  //cgL.SetParameter(Cybergear_parameter_Limit_Current, 20.0f);
-  //cgL.SetParameter(Cybergear_parameter_Speed_kp, 1.2f);
-  //cgL.SetParameter(Cybergear_parameter_Speed_ki, 0.002f);
-  //cgL.SetRunMode(2);
+
+  cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
+  cgR.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
+  cgL.SetRunMode(2);
+  cgR.SetRunMode(2);
+  cgL.Enable();
+  cgR.Enable();
 
   //cgR.SetParameter(Cybergear_parameter_Limit_Current, 20.0f);
   //cgR.SetParameter(Cybergear_parameter_Speed_kp, 1.2f);
@@ -103,30 +105,37 @@ void setup() {
 }
 
 void loop() {
-  uint32_t cur_t = millis();
+  int8_t err;
   uint8_t st;
-  
-  st = twai.Tick();
-  if(st!=0){
+  err = twai.Tick();
+  if(err!=0){
     Serial.print("$");
-    Serial.println(st);
+    Serial.println(err);
     delay(1000);
     return;
   }
-  
-  if((cur_t - bno_to >= 10)){
-    bno_to = cur_t;
-    //Serial.print(bno.GetRoll()/16.0);Serial.println();
-  }
 
-  /*
-  if(cgL.Tick()==1){
+  if(digitalRead(BNO_INT) && (bno.GetIntSta()&1)!=0){
+    //Serial.print(bno.GetRoll()/16.0);Serial.println();
+    float r = bno.GetRoll()/16.0;
+    //float v = sqrt(abs(r))*kp*(r<0?-1:1);
+    float v = r*kp;
+    if((cgL.GetMotorStatus()&0xC0) == 0x80){
+      cgL.SendFloat(0x700A, v);
+    }    
+    if((cgR.GetMotorStatus()&0xC0) == 0x80){
+      cgR.SendFloat(0x700A, -v); 
+    }    
+  }
+  
+  Terminal();
+
+  
+  /*if(cgL.Tick()==1){
     st = cgL.GetMotorStatus();
     if(st&0x01){
       //Serial.println("Fault: Under Voltage");
       cgL.ClearFault();
-    } else if((st&0xC0) == 0x80){
-      cgL.SendFloat(0x700A, val);
     }
   } else if(cgR.Tick()==1){
     st = cgR.GetMotorStatus();

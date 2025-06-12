@@ -7,7 +7,7 @@ class BNO055 {
   public:
   BNO055(TwoWire *wire, bool addr = true);
   int8_t Initialize();
-
+  int16_t GetFwRev();
   uint8_t GetIntSta();
   int16_t GetHeading();
   int16_t GetRoll();

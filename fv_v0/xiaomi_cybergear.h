@@ -17,14 +17,15 @@ class Cybergear{
   //  1 - Position mode
   //  2 - Velocity Mode
   //  3 - Current Mode
-  int SetRunMode(int8_t run_mode);
-  int Command(float target, float speed, float torque, float kp, float kd);
-  int SetZero();
+  int8_t SetRunMode(int8_t run_mode);
+  int8_t Enable();
+  int8_t Command(float target, float speed, float torque, float kp, float kd);
+  int8_t SetZero();
   //  1 - Status Updated
-  int Tick();
+  int8_t Tick();
   uint8_t GetMotorStatus(){ return _motorStatus; }
-  int ClearFault();
-  int SendFloat(uint16_t addr, float value);
+  int8_t ClearFault();
+  int8_t SendFloat(uint16_t addr, float value);
 
   private:
   TWAI *_twai;
@@ -36,10 +37,10 @@ class Cybergear{
   uint32_t _to;
   int _waitUpdate;
 
-  int StatusCB(uint32_t identifier, uint8_t length, uint8_t *data);
-  int FaultCB(uint32_t identifier, uint8_t length, uint8_t *data);
+  int8_t StatusCB(uint32_t identifier, uint8_t length, uint8_t *data);
+  int8_t FaultCB(uint32_t identifier, uint8_t length, uint8_t *data);
 
-  int SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data);
+  int8_t SendRaw(uint8_t can_id, uint8_t cmd_id, uint16_t option, uint8_t len, uint8_t* data);
 };
 
 #endif // XIAOMI_CYBERGEAR_H

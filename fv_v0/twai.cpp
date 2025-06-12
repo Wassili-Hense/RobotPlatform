@@ -4,6 +4,8 @@
 #include "driver/twai.h"
 //https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/twai.html
 
+#include <HardwareSerial.h>
+
 TWAI::TWAI(uint8_t rx_pin, uint8_t tx_pin) : _rx_pin(rx_pin), _tx_pin(tx_pin), _cbHead(nullptr), _cbTail(nullptr) { }
 TWAI::~TWAI(){
   if (twai_stop() != ESP_OK) return;
@@ -12,16 +14,14 @@ TWAI::~TWAI(){
 int8_t TWAI::Tick(){
   twai_status_info_t twai_status;
   if(twai_get_status_info(&twai_status)!= ESP_OK || twai_status.state != TWAI_STATE_RUNNING){
-    _rts=false;
     int err = Init();
     if(err!=0){
       return err;
     }  
     if(twai_get_status_info(&twai_status)!= ESP_OK) return -4;  // Failed to get twai status  
     if(twai_status.state != TWAI_STATE_RUNNING) return -5; // Twai not runing
+    return 0;
   }
-  
-  _rts = twai_status.msgs_to_tx==0;
   
   uint32_t alerts_triggered;
   twai_read_alerts(&alerts_triggered, 0);
@@ -33,7 +33,7 @@ int8_t TWAI::Tick(){
   if (alerts_triggered & TWAI_ALERT_RX_DATA) {
     twai_message_t msg;
     TWAI_Sub *cur;
-    int err;
+    int8_t err;
     while (twai_receive(&msg, 0) == ESP_OK) {
       cur = _cbHead;
       while(cur){
@@ -42,11 +42,27 @@ int8_t TWAI::Tick(){
         cur = cur->next();
       }
     }
+    //Serial.print("RC:");Serial.println(msg.identifier, HEX);
+  } else if(twai_status.msgs_to_tx==0 && _mqHead){
+    twai_message_t message;
+    message.extd = 1; //enable extended frame format
+    message.identifier = _mqHead->Identifier();
+    message.data_length_code = _mqHead->Length();
+    for (int i = 0; i < _mqHead->Length(); i++) {
+      message.data[i] = _mqHead->Data()[i];
+    }
+    if(twai_transmit(&message, 0) == ESP_OK){
+      if(!_mqHead->Next()){
+        _mqTail = NULL;  
+      }
+      _mqHead = _mqHead->Next();
+      //Serial.print("SC:");Serial.println(message.identifier, HEX);
+    }    
   }
 
   return 0;
 }
-void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb){
+void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int8_t(uint32_t identifier, uint8_t length, uint8_t *data)> cb){
   TWAI_Sub *h = new TWAI_Sub(value, mask, cb);
   if (!_cbTail) {
     _cbHead = h;
@@ -57,15 +73,17 @@ void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int(uint32_t i
   }
 }
 int8_t TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
-  _rts = false;
-  twai_message_t message;
-  message.extd = 1; //enable extended frame format
-  message.identifier = identifier;
-  message.data_length_code = length;
-  for (int i = 0; i < length; i++) {
-    message.data[i] = data[i];
+  TWAI_Msg *m = new TWAI_Msg(identifier, length, data);
+  if(!m) return -9;
+  if (!_mqTail) {
+    _mqHead = m;
+    _mqTail = m;
+  } else {
+    _mqTail->Next(m);
+    _mqTail = m;
   }
-  return (twai_transmit(&message, 0) != ESP_OK)?-9:0;
+  //Serial.print("QC:");Serial.println(identifier, HEX);
+  return 0;
 }
 int8_t TWAI::Init(){
   // Initialize configuration structures using macro initializers
@@ -86,7 +104,7 @@ int8_t TWAI::Init(){
   return 0;
 }
 
-TWAI_Sub::TWAI_Sub(uint32_t value, uint32_t mask, std::function<int(uint32_t identifier, uint8_t length, uint8_t *data)> cb){
+TWAI_Sub::TWAI_Sub(uint32_t value, uint32_t mask, std::function<int8_t(uint32_t identifier, uint8_t length, uint8_t *data)> cb){
   _value=value;
   _mask=mask;
   _cb=cb;
