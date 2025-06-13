@@ -1,5 +1,8 @@
 #include <functional>
 #include <cstdint>
+#include <driver/twai.h>
+//https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/twai.html
+#include "Queue.h"
 
 #ifndef TWAI_H
 #define TWAI_H
@@ -19,26 +22,6 @@ class TWAI_Sub{
     uint32_t _mask;
     std::function<int8_t(uint32_t identifier, uint8_t length, uint8_t *data)> _cb;
     TWAI_Sub *_next = nullptr;
-};
-
-class TWAI_Msg{
-  public:
-    TWAI_Msg(uint32_t identifier, uint8_t length, uint8_t *data){
-      _identifier = identifier;
-      _length = length;
-      for (int i = 0; i < length; i++) _data[i] = data[i];
-    }
-    uint32_t Identifier(){ return _identifier; }
-    uint8_t Length(){ return _length; }
-    uint8_t * Data(){ return _data; }
-  
-    TWAI_Msg *Next(){ return _next;}
-    void Next(TWAI_Msg *r){ _next = r; }
-  private:
-    TWAI_Msg *_next = nullptr;
-    uint32_t _identifier;
-    uint8_t _length;
-    uint8_t _data[8];
 };
 
 class TWAI{
@@ -66,10 +49,7 @@ class TWAI{
 
     TWAI_Sub *_cbHead;
     TWAI_Sub *_cbTail;
-
-    TWAI_Msg *_mqHead;
-    TWAI_Msg *_mqTail;
-
+    Queue<twai_message_t *> *_msgQueue;
     int8_t Init();
 };
 

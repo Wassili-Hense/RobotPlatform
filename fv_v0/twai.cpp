@@ -1,12 +1,12 @@
 #include "driver/rmt_tx.h"
 #include "esp_err.h"
 #include "TWAI.h"
-#include "driver/twai.h"
-//https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/twai.html
 
 #include <HardwareSerial.h>
 
-TWAI::TWAI(uint8_t rx_pin, uint8_t tx_pin) : _rx_pin(rx_pin), _tx_pin(tx_pin), _cbHead(nullptr), _cbTail(nullptr) { }
+TWAI::TWAI(uint8_t rx_pin, uint8_t tx_pin) : _rx_pin(rx_pin), _tx_pin(tx_pin), _cbHead(nullptr), _cbTail(nullptr) { 
+  _msgQueue = new Queue<twai_message_t *>(15);
+}
 TWAI::~TWAI(){
   if (twai_stop() != ESP_OK) return;
   twai_driver_uninstall();
@@ -29,6 +29,8 @@ int8_t TWAI::Tick(){
   if (alerts_triggered & TWAI_ALERT_ERR_PASS) return -6; // TWAI controller has become error passive
   if (alerts_triggered & TWAI_ALERT_BUS_ERROR) return -7; // Error has occurred on the bus
   if (alerts_triggered & TWAI_ALERT_TX_FAILED) return -8; // The Transmission failed
+
+  twai_message_t *msg_tx;
   // Check if message is received
   if (alerts_triggered & TWAI_ALERT_RX_DATA) {
     twai_message_t msg;
@@ -43,19 +45,9 @@ int8_t TWAI::Tick(){
       }
     }
     //Serial.print("RC:");Serial.println(msg.identifier, HEX);
-  } else if(twai_status.msgs_to_tx==0 && _mqHead){
-    twai_message_t message;
-    message.extd = 1; //enable extended frame format
-    message.identifier = _mqHead->Identifier();
-    message.data_length_code = _mqHead->Length();
-    for (int i = 0; i < _mqHead->Length(); i++) {
-      message.data[i] = _mqHead->Data()[i];
-    }
-    if(twai_transmit(&message, 0) == ESP_OK){
-      if(!_mqHead->Next()){
-        _mqTail = NULL;  
-      }
-      _mqHead = _mqHead->Next();
+  } else if(twai_status.msgs_to_tx==0 && (msg_tx = _msgQueue->peek())!=NULL){
+    if(twai_transmit(msg_tx, 0) == ESP_OK){
+      _msgQueue->pop();
       //Serial.print("SC:");Serial.println(message.identifier, HEX);
     }    
   }
@@ -73,17 +65,13 @@ void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int8_t(uint32_
   }
 }
 int8_t TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
-  TWAI_Msg *m = new TWAI_Msg(identifier, length, data);
-  if(!m) return -9;
-  if (!_mqTail) {
-    _mqHead = m;
-    _mqTail = m;
-  } else {
-    _mqTail->Next(m);
-    _mqTail = m;
-  }
+  twai_message_t *m = new twai_message_t();
+  m->extd=1;
+  m->identifier = identifier;
+  m->data_length_code = length;
+  memcpy(m->data, data, length);
+  return _msgQueue->push(m)?0:-9;
   //Serial.print("QC:");Serial.println(identifier, HEX);
-  return 0;
 }
 int8_t TWAI::Init(){
   // Initialize configuration structures using macro initializers
