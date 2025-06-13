@@ -12,7 +12,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-uint8_t broadcastAddress[] = {0xCC, 0x7B, 0x5C, 0xA7, 0x55, 0x44};
+uint8_t tgtAddr[] = {0xCC, 0x7B, 0x5C, 0xA7, 0x55, 0x44};
 
 struct nMsg {
   char cmd;
@@ -26,13 +26,19 @@ esp_now_peer_info_t peerInfo;
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   if(status == ESP_NOW_SEND_SUCCESS){
     digitalWrite(LED_BUILTIN, LOW);
+  } else {
+    Serial.println(" - failed");
   }
 }
 void Command(char cmd, float val){
   digitalWrite(LED_BUILTIN, HIGH);
   myData.cmd = cmd;
   myData.val = val;
-  esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+  Serial.print(cmd);Serial.print("$");Serial.print(val);
+  esp_err_t result = esp_now_send(tgtAddr, (uint8_t *) &myData, sizeof(myData));
+  if(result != ESP_OK){
+    Serial.println(" - not connected");
+  }
 }
 
 char _rxBuffer[17];
@@ -61,6 +67,24 @@ void Terminal(){
   }
 }
 
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  if(len==2 && incomingData[0]==0x11){
+    Serial.print(" - ");Serial.println((int8_t)incomingData[1]);
+  }
+}
+/*
+#include <esp_wifi.h>
+void readMacAddress(){
+  uint8_t baseMac[6];
+  esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
+  if (ret == ESP_OK) {
+    Serial.printf("%02x:%02x:%02x:%02x:%02x:%02x\n",
+                  baseMac[0], baseMac[1], baseMac[2],
+                  baseMac[3], baseMac[4], baseMac[5]);
+  } else {
+    Serial.println("Failed to read MAC address");
+  }
+}*/
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
@@ -70,7 +94,16 @@ void setup() {
  
   // Set device as a Wi-Fi Station
   WiFi.mode(WIFI_STA);
-
+  if (esp_now_init() == ESP_OK) {
+    esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+  } else {
+    Serial.println("Error initializing ESP-NOW");
+  }
+  /*
+  WiFi.STA.begin();
+  Serial.print("[DEFAULT] ESP32 Board MAC Address: ");
+  readMacAddress();
+  */
   // Init ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
@@ -82,7 +115,7 @@ void setup() {
   esp_now_register_send_cb(OnDataSent);
   
   // Register peer
-  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+  memcpy(peerInfo.peer_addr, tgtAddr, 6);
   peerInfo.channel = 0;  
   peerInfo.encrypt = false;
   

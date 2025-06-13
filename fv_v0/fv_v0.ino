@@ -5,15 +5,20 @@
 #include "xiaomi_cybergear.h"
 
 #define BNO_INT 16
+
 BNO055 bno(&Wire, false);
 TWAI twai = TWAI(/*RX_PIN=*/26, /*TX_PIN=*/25);
 Cybergear cgL = Cybergear(&twai, 0x03);
 Cybergear cgR = Cybergear(&twai, 0x04);
 
+uint8_t tgtAddr[] = {0x08, 0xD1, 0xF9, 0x38, 0x2C, 0x70};
+esp_now_peer_info_t peerInfo;
+uint8_t nowAnsw[] = {0x11, 0};
+
 float kp;
 
 
-void Command(char cmd, float val){
+int8_t Command(char cmd, float val){
     int r;
     switch(cmd){
     case 'm':
@@ -31,7 +36,7 @@ void Command(char cmd, float val){
       r=-33;
       break;
     }
-    Serial.print(cmd);Serial.print("$");Serial.print(val);Serial.print("=");Serial.println(r);
+    return r;
 }
 
 char _rxBuffer[17];
@@ -42,7 +47,9 @@ void Terminal(){
     c = (char)Serial.read();
     if(c=='\r'){
       String str = &_rxBuffer[1];
-      Command(_rxBuffer[0], str.toFloat());
+      float val = str.toFloat();
+      int8_t r = Command(_rxBuffer[0], val);
+      Serial.print(_rxBuffer[0]);Serial.print("$");Serial.print(val);Serial.print("=");Serial.println(r);
       _rxIdx = 0;
       _rxBuffer[0] = '\0';
     }else if (c == '\b' || c == 127) {
@@ -68,13 +75,11 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if(len == sizeof(nMsg)){
     nMsg msg;
     memcpy(&msg, incomingData, sizeof(nMsg));
-    Command(msg.cmd, msg.val);
-    Serial.print(msg.cmd);
-    Serial.print(">");
-    Serial.println(msg.val);
+    int8_t r = Command(msg.cmd, msg.val);
+    nowAnsw[1] = r;
+    esp_now_send(tgtAddr, nowAnsw, 2);
   }
 }
-
 
 void setup() {
   kp = 0.5;
@@ -86,6 +91,15 @@ void setup() {
     esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
   } else {
     Serial.println("Error initializing ESP-NOW");
+  }
+  // Register peer
+  memcpy(peerInfo.peer_addr, tgtAddr, 6);
+  peerInfo.channel = 0;  
+  peerInfo.encrypt = false;
+  
+  // Add peer        
+  if (esp_now_add_peer(&peerInfo) != ESP_OK){
+    Serial.println("Failed to add peer");
   }
 
   Wire.begin(); //Start I2C communication as master
