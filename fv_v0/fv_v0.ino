@@ -1,3 +1,5 @@
+#include <esp_now.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include "bno055.hpp"
 #include "xiaomi_cybergear.h"
@@ -34,7 +36,6 @@ void Command(char cmd, float val){
 
 char _rxBuffer[17];
 uint8_t _rxIdx;
-
 void Terminal(){
   char c;
   while(Serial.available() > 0){
@@ -59,11 +60,33 @@ void Terminal(){
   }
 }
 
-float rollPrev;
+struct nMsg {
+  char cmd;
+  float val;
+};
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  if(len == sizeof(nMsg)){
+    nMsg msg;
+    memcpy(&msg, incomingData, sizeof(nMsg));
+    Command(msg.cmd, msg.val);
+    Serial.print(msg.cmd);
+    Serial.print(">");
+    Serial.println(msg.val);
+  }
+}
+
+
 void setup() {
   kp = 0.5;
   Serial.begin(115200);
   Serial.println("Start");
+
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() == ESP_OK) {
+    esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+  } else {
+    Serial.println("Error initializing ESP-NOW");
+  }
 
   Wire.begin(); //Start I2C communication as master
   Wire.setClock(400000);  //set I2C to fast mode at 400kHz

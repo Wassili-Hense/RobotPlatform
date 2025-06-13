@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <driver/twai.h>
 //https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/twai.html
-#include "Queue.h"
 
 #ifndef TWAI_H
 #define TWAI_H
@@ -49,7 +48,10 @@ class TWAI{
 
     TWAI_Sub *_cbHead;
     TWAI_Sub *_cbTail;
-    Queue<twai_message_t *> *_msgQueue;
+    uint8_t _mqHead;
+    uint8_t _mqTail;
+    uint8_t _mqCount;
+    twai_message_t _mqArr[16];
     int8_t Init();
 };
 

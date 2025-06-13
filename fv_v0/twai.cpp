@@ -5,7 +5,9 @@
 #include <HardwareSerial.h>
 
 TWAI::TWAI(uint8_t rx_pin, uint8_t tx_pin) : _rx_pin(rx_pin), _tx_pin(tx_pin), _cbHead(nullptr), _cbTail(nullptr) { 
-  _msgQueue = new Queue<twai_message_t *>(15);
+  _mqHead = 0;
+  _mqTail = 0;
+  _mqCount = 0;
 }
 TWAI::~TWAI(){
   if (twai_stop() != ESP_OK) return;
@@ -30,7 +32,6 @@ int8_t TWAI::Tick(){
   if (alerts_triggered & TWAI_ALERT_BUS_ERROR) return -7; // Error has occurred on the bus
   if (alerts_triggered & TWAI_ALERT_TX_FAILED) return -8; // The Transmission failed
 
-  twai_message_t *msg_tx;
   // Check if message is received
   if (alerts_triggered & TWAI_ALERT_RX_DATA) {
     twai_message_t msg;
@@ -45,9 +46,10 @@ int8_t TWAI::Tick(){
       }
     }
     //Serial.print("RC:");Serial.println(msg.identifier, HEX);
-  } else if(twai_status.msgs_to_tx==0 && (msg_tx = _msgQueue->peek())!=NULL){
-    if(twai_transmit(msg_tx, 0) == ESP_OK){
-      _msgQueue->pop();
+  } else if(twai_status.msgs_to_tx==0 && _mqCount > 0){
+    if(twai_transmit(&_mqArr[_mqTail], 0) == ESP_OK){
+      _mqTail = (_mqTail+1) & 0x0F;
+      _mqCount--;
       //Serial.print("SC:");Serial.println(message.identifier, HEX);
     }    
   }
@@ -65,13 +67,15 @@ void TWAI::Subscribe(uint32_t value, uint32_t mask, std::function<int8_t(uint32_
   }
 }
 int8_t TWAI::Send(uint32_t identifier, uint8_t length, uint8_t *data){
-  twai_message_t *m = new twai_message_t();
-  m->extd=1;
-  m->identifier = identifier;
-  m->data_length_code = length;
-  memcpy(m->data, data, length);
-  return _msgQueue->push(m)?0:-9;
+  if(_mqCount>15){ return -9; }// queue over
+  _mqArr[_mqHead].extd=1;
+  _mqArr[_mqHead].identifier = identifier;
+  _mqArr[_mqHead].data_length_code = length;
+  memcpy(_mqArr[_mqHead].data, data, length);
+  _mqCount++;
+  _mqHead = (_mqHead+1)&0x0F;
   //Serial.print("QC:");Serial.println(identifier, HEX);
+  return 0;
 }
 int8_t TWAI::Init(){
   // Initialize configuration structures using macro initializers
