@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include "bno055.hpp"
+#include "pid.h"
 #include "xiaomi_cybergear.h"
 
 #define BNO_INT 16
@@ -11,26 +12,31 @@ TWAI twai = TWAI(/*RX_PIN=*/26, /*TX_PIN=*/25);
 Cybergear cgL = Cybergear(&twai, 0x03);
 Cybergear cgR = Cybergear(&twai, 0x04);
 
+float zero = -0.035;
+PIDController AnglePID(32, 600, 0.8, 0, 17);
+
 uint8_t tgtAddr[] = {0x08, 0xD1, 0xF9, 0x38, 0x2C, 0x70};
 esp_now_peer_info_t peerInfo;
 uint8_t nowAnsw[] = {0x11, 0};
 
-float kp;
-
-
-int8_t Command(char cmd, float val){
+int8_t Command(char cmd, float value){
     int r;
     switch(cmd){
-    case 'm':
-      r=cgL.SetRunMode((int8_t)val);
-      r=cgR.SetRunMode((int8_t)val);
-    case 'v':
-      r=cgL.SendFloat(0x700A, val);
-      r=cgR.SendFloat(0x700A, -val);
-      break;
-    case 'k':
+    case 'p':
+      AnglePID.P = value;
       r=0;
-      kp = val;
+      break;
+    case 'd':
+      AnglePID.D = value;
+      r=0;
+      break;
+    case 'i':
+      AnglePID.I = value;
+      r=0;
+      break;
+    case 'z':
+      r=0;
+      zero = value;
       break;
     default: 
       r=-33;
@@ -41,6 +47,7 @@ int8_t Command(char cmd, float val){
 
 char _rxBuffer[17];
 uint8_t _rxIdx;
+
 void Terminal(){
   char c;
   while(Serial.available() > 0){
@@ -81,8 +88,8 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   }
 }
 
+
 void setup() {
-  kp = 0.5;
   Serial.begin(115200);
   Serial.println("Start");
 
@@ -115,29 +122,38 @@ void setup() {
       delay(1000);
     }
   }while(err!=0);
-  Serial.print("bno.FwRev = ");Serial.println(bno.GetFwRev(), HEX);
 
+  bool l = false;
+  bool r = false;
   do{
     err=twai.Tick();
     if(err!=0){
-      Serial.print("TWAI.Tick - ");
+      Serial.print("T");
       Serial.println(err);
       delay(1000);
+      continue;
     }
-  }while(err!=0);
+    if(cgL.Tick()){
+      l = true;
+    }
+    if(cgR.Tick()){
+      r = true;
+    }
+    Serial.print(".");
+    delay(1);
+  }while(err!=0 || !l || !r);
+  Serial.println();
 
-  cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
-  cgR.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
   cgL.SetRunMode(2);
   cgR.SetRunMode(2);
   cgL.Enable();
   cgR.Enable();
-
-  //cgR.SetParameter(Cybergear_parameter_Limit_Current, 20.0f);
-  //cgR.SetParameter(Cybergear_parameter_Speed_kp, 1.2f);
-  //cgR.SetParameter(Cybergear_parameter_Speed_ki, 0.002f);
-  //cgR.SetRunMode(2);
-
+  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 20.0f);
+  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 20.0f);
+  //cgL.SendFloat(/*ADDR_SPEED_KP*/0x2014, 2.0f);
+  //cgR.SendFloat(/*ADDR_SPEED_KP*/0x2014, 2.0f);
+  //cgL.SendFloat(/*ADDR_SPEED_KI*/0x2015, 0.0f);
+  //cgR.SendFloat(/*ADDR_SPEED_KI*/0x2015, 0.0f);
   Serial.println("Ready");
 }
 
@@ -153,36 +169,23 @@ void loop() {
   }
 
   if(digitalRead(BNO_INT) && (bno.GetIntSta()&1)!=0){
-    //Serial.print(bno.GetRoll()/16.0);Serial.println();
-    float r = bno.GetRoll()/16.0;
-    //float v = sqrt(abs(r))*kp*(r<0?-1:1);
-    float v = r*kp;
+    float a = bno.GetRoll() / 916.73247220931713402877047702568;
+    //float b = bno.GetGyroY() / 916.73247220931713402877047702568; 
+    //float vCur = (cgL.velocity - cgR.velocity)*0.5;
+    float v = AnglePID(a - zero);
     if((cgL.GetMotorStatus()&0xC0) == 0x80){
-      cgL.SendFloat(0x700A, v);
+      cgL.Command(v);
     }    
     if((cgR.GetMotorStatus()&0xC0) == 0x80){
-      cgR.SendFloat(0x700A, -v); 
-    }    
-  }
-  
-  Terminal();
-
-  
-  /*if(cgL.Tick()==1){
-    st = cgL.GetMotorStatus();
-    if(st&0x01){
-      //Serial.println("Fault: Under Voltage");
-      cgL.ClearFault();
+      cgR.Command(-v);
     }
-  } else if(cgR.Tick()==1){
-    st = cgR.GetMotorStatus();
-    if(st&0x01){
-      //Serial.println("Fault: Under Voltage");
-      cgR.ClearFault();
-    } else if((st&0xC0) == 0x80){
-      cgR.SendFloat(0x700A, -val);
-    }
+    Serial.print(a);Serial.print(",");
+    Serial.print(v);//Serial.print(",");
+    //Serial.print((cgL.torque - cgR.torque));
+    Serial.println();
+  } else if(cgL.Tick()){
+  } else if(cgR.Tick()){
   } else {
     Terminal();
-  }*/
+  }
 }

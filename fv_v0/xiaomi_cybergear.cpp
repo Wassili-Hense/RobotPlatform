@@ -6,7 +6,7 @@
 #include "xiaomi_cybergear.h"
 
 uint8_t MASTER_CAN_ID = 0x00;
-uint32_t STATUS_PERIODE_MS = 50; 
+uint32_t STATUS_PERIODE_MS = 10; 
 
 float ushort2float(uint16_t x, float min, float max){
   return (float) x / std::numeric_limits<uint16_t>::max() * (max - min) + min;
@@ -50,7 +50,19 @@ int8_t Cybergear::Enable(){
     uint8_t data[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     return SendRaw(_addr, CMD_ENABLE, MASTER_CAN_ID, 8, data);      
 }
-
+int8_t Cybergear::Command(float target){
+  switch(_runMode){
+    case MODE_MOTION:
+      return Command(target, 0, 0, 1, 0);
+    case MODE_POSITION:
+      return SendFloat(ADDR_POSITION_REF, target);
+    case MODE_SPEED:
+      return SendFloat(ADDR_SPEED_REF, target);
+    case MODE_CURRENT:
+      return SendFloat(ADDR_I_REF, target);
+  }
+  return -11;
+}
 int8_t Cybergear::Command(float position, float speed, float torque, float kp, float kd){
   uint8_t data[8] = {0x00};
 
@@ -110,10 +122,10 @@ int8_t Cybergear::ClearFault(){
 
 int8_t Cybergear::StatusCB(uint32_t identifier, uint8_t length, uint8_t *data){
   _motorStatus = (uint8_t)(identifier>>16);
-  position = ushort2float((uint16_t)data[1] | data[0] << 8, -POS_MAX, POS_MAX);
-  speed = ushort2float((uint16_t)data[3] | data[2] << 8, -V_MAX, V_MAX);
+  //position = ushort2float((uint16_t)data[1] | data[0] << 8, -POS_MAX, POS_MAX);
+  velocity = ushort2float((uint16_t)data[3] | data[2] << 8, -V_MAX, V_MAX);
   torque = ushort2float((uint16_t)data[5] | data[4] << 8, -T_MAX, T_MAX);
-  temperature = (float)(data[7] | data[6] << 8)/10.0f;
+  //temperature = (float)(data[7] | data[6] << 8)/10.0f;
   _waitUpdate = 1;
   return 0;
 }

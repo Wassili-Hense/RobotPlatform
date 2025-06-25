@@ -6,10 +6,10 @@
 
 class Cybergear{
   public:
-  float position;
-  float speed;
+  //float position;
+  float velocity;
   float torque;
-  float temperature;
+  //float temperature;
 
   Cybergear(TWAI *twai, uint8_t addr);
   // -1 - OFF
@@ -19,7 +19,8 @@ class Cybergear{
   //  3 - Current Mode
   int8_t SetRunMode(int8_t run_mode);
   int8_t Enable();
-  int8_t Command(float target, float speed, float torque, float kp, float kd);
+  int8_t Command(float target);
+  int8_t Command(float target, float velocity, float torque, float kp, float kd);
   int8_t SetZero();
   //  1 - Status Updated
   int8_t Tick();

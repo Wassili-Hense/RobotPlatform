@@ -15,7 +15,7 @@ int8_t BNO055::Initialize(){
   }
   WriteRegister(BNO055_INT_MASK_ADDR, 0b00000001);
   WriteRegister(BNO055_INT_ADDR, 0b00000001);
-  WriteRegister(BNO055_UNIT_SEL_ADDR, 0x80);
+  WriteRegister(BNO055_UNIT_SEL_ADDR, 0b10000000);
   WriteRegister(BNO055_OPR_MODE_ADDR, BNO055_OPERATION_MODE_NDOF);
   delay(8);  // Switching time config mode -> any operation mode 7ms (Table 3-6)
   
@@ -23,11 +23,11 @@ int8_t BNO055::Initialize(){
   if(st==5) return 0;
   return ReadRegister(BNO055_SYS_ERR_ADDR);
 }
-int16_t BNO055::GetFwRev(){
-  return ReadRegister16(BNO055_SW_REV_ID_LSB_ADDR);
-}
 uint8_t BNO055::GetIntSta(){
   return ReadRegister(BNO055_INTR_STAT_ADDR);
+}
+int16_t BNO055::GetGyroY(){ 
+  return ReadRegister16(BNO055_GYRO_DATA_Y_LSB_ADDR);
 }
 int16_t BNO055::GetHeading(){
   return ReadRegister16(BNO055_EULER_H_LSB_ADDR);
