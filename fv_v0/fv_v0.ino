@@ -13,7 +13,7 @@ Cybergear cgL = Cybergear(&twai, 0x03);
 Cybergear cgR = Cybergear(&twai, 0x04);
 
 float zero = -0.035;
-PIDController AnglePID(32, 600, 0.8, 0, 17);
+PIDController AnglePID(35, 700, 0.6, 0, 15);
 
 uint8_t tgtAddr[] = {0x08, 0xD1, 0xF9, 0x38, 0x2C, 0x70};
 esp_now_peer_info_t peerInfo;
@@ -32,6 +32,10 @@ int8_t Command(char cmd, float value){
       break;
     case 'i':
       AnglePID.I = value;
+      r=0;
+      break;
+    case 'm':
+      AnglePID.limit = value;
       r=0;
       break;
     case 'z':
@@ -179,10 +183,10 @@ void loop() {
     if((cgR.GetMotorStatus()&0xC0) == 0x80){
       cgR.Command(-v);
     }
-    Serial.print(a);Serial.print(",");
-    Serial.print(v);//Serial.print(",");
+    //Serial.print(a);Serial.print(",");
+    //Serial.print(v);//Serial.print(",");
     //Serial.print((cgL.torque - cgR.torque));
-    Serial.println();
+    //Serial.println();
   } else if(cgL.Tick()){
   } else if(cgR.Tick()){
   } else {

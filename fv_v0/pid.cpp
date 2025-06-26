@@ -40,6 +40,7 @@ float PIDController::operator() (float error){
     // sum all the components
     float output = proportional + integral + derivative;
     // antiwindup - limit the output variable
+    output = _constrain(output, -limit, limit);
 
     // if output ramp defined
     if(output_ramp > 0){
