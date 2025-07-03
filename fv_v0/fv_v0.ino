@@ -12,8 +12,10 @@ TWAI twai = TWAI(/*RX_PIN=*/26, /*TX_PIN=*/25);
 Cybergear cgL = Cybergear(&twai, 0x03);
 Cybergear cgR = Cybergear(&twai, 0x04);
 
-float zero = -0.035;
-PIDController AnglePID(35, 700, 0.6, 0, 15);
+float tVelocity = 0;
+float turn = 0;
+PIDController AnglePID(37, 700, 0.55, 0, 10);
+PIDController VelocityPID(1.7*0.001, 47*0.001, 0, 0, 0.3);
 
 uint8_t tgtAddr[] = {0x08, 0xD1, 0xF9, 0x38, 0x2C, 0x70};
 esp_now_peer_info_t peerInfo;
@@ -26,21 +28,29 @@ int8_t Command(char cmd, float value){
       AnglePID.P = value;
       r=0;
       break;
-    case 'd':
-      AnglePID.D = value;
-      r=0;
-      break;
     case 'i':
       AnglePID.I = value;
       r=0;
       break;
-    case 'm':
-      AnglePID.limit = value;
+    case 'd':
+      AnglePID.D = value;
       r=0;
       break;
-    case 'z':
+    case 'P':
+      VelocityPID.P = value*0.001;
       r=0;
-      zero = value;
+      break;
+    case 'I':
+      VelocityPID.I = value*0.001;
+      r=0;
+      break;
+    case 'v':
+      r=0;
+      tVelocity = value;
+      break;
+    case 'r':
+      r=0;
+      turn = -value/1.5;
       break;
     default: 
       r=-33;
@@ -82,6 +92,10 @@ struct nMsg {
   char cmd;
   float val;
 };
+
+uint8_t tCnt=0;
+uint8_t _sndBuff[sizeof(nMsg)];
+
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if(len == sizeof(nMsg)){
     nMsg msg;
@@ -90,6 +104,13 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     nowAnsw[1] = r;
     esp_now_send(tgtAddr, nowAnsw, 2);
   }
+}
+void SendNMsg(char cmd, float val){
+  nMsg msg;
+  msg.cmd = cmd;
+  msg.val = val;
+  memcpy(_sndBuff, &msg, sizeof(nMsg));
+  esp_now_send(tgtAddr, _sndBuff, sizeof(nMsg));
 }
 
 
@@ -152,8 +173,8 @@ void setup() {
   cgR.SetRunMode(2);
   cgL.Enable();
   cgR.Enable();
-  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 20.0f);
-  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 20.0f);
+  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
+  //cgL.SendFloat(/*Cybergear_parameter_Limit_Current*/0x7018, 10.0f);
   //cgL.SendFloat(/*ADDR_SPEED_KP*/0x2014, 2.0f);
   //cgR.SendFloat(/*ADDR_SPEED_KP*/0x2014, 2.0f);
   //cgL.SendFloat(/*ADDR_SPEED_KI*/0x2015, 0.0f);
@@ -174,14 +195,26 @@ void loop() {
 
   if(digitalRead(BNO_INT) && (bno.GetIntSta()&1)!=0){
     float a = bno.GetRoll() / 916.73247220931713402877047702568;
-    //float b = bno.GetGyroY() / 916.73247220931713402877047702568; 
-    //float vCur = (cgL.velocity - cgR.velocity)*0.5;
-    float v = AnglePID(a - zero);
+    //float b = bno.GetGyroY() / 916.73247220931713402877047702568;
+    float v;
+    if(abs(a)>0.75){
+      VelocityPID.reset();
+      AnglePID.reset();
+      v = 0;
+      turn = 0;
+    } else {
+      float aExp = VelocityPID((cgL.velocity - cgR.velocity) - tVelocity);
+      v = AnglePID(a + aExp);
+      if(++tCnt>25){
+        tCnt=0;
+        SendNMsg('E', aExp*180/3.1415926);
+      }      
+    }
     if((cgL.GetMotorStatus()&0xC0) == 0x80){
-      cgL.Command(v);
+      cgL.Command(v+turn);
     }    
     if((cgR.GetMotorStatus()&0xC0) == 0x80){
-      cgR.Command(-v);
+      cgR.Command(turn-v);
     }
     //Serial.print(a);Serial.print(",");
     //Serial.print(v);//Serial.print(",");

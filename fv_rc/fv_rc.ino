@@ -11,6 +11,8 @@
 
 #include <esp_now.h>
 #include <WiFi.h>
+#include <Wire.h>
+#include "Nunchuk.h"
 
 uint8_t tgtAddr[] = {0xCC, 0x7B, 0x5C, 0xA7, 0x55, 0x44};
 
@@ -34,7 +36,7 @@ void Command(char cmd, float val){
   digitalWrite(LED_BUILTIN, HIGH);
   myData.cmd = cmd;
   myData.val = val;
-  Serial.print(cmd);Serial.print("$");Serial.print(val);
+  Serial.print(cmd);Serial.print("$");Serial.print(val, 8);
   esp_err_t result = esp_now_send(tgtAddr, (uint8_t *) &myData, sizeof(myData));
   if(result != ESP_OK){
     Serial.println(" - not connected");
@@ -70,6 +72,10 @@ void Terminal(){
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if(len==2 && incomingData[0]==0x11){
     Serial.print(" - ");Serial.println((int8_t)incomingData[1]);
+  } else if(len==sizeof(myData)){
+    nMsg msg;
+    memcpy(&msg, incomingData, sizeof(nMsg));
+    Serial.print(msg.cmd);Serial.print('#');Serial.println(msg.val, 8);
   }
 }
 /*
@@ -85,13 +91,15 @@ void readMacAddress(){
     Serial.println("Failed to read MAC address");
   }
 }*/
+
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
   // Init Serial Monitor
   Serial.begin(115200);
- 
+  Serial.println("Start");
+
   // Set device as a Wi-Fi Station
   WiFi.mode(WIFI_STA);
   if (esp_now_init() == ESP_OK) {
@@ -124,9 +132,36 @@ void setup() {
     Serial.println("Failed to add peer");
     return;
   }
+  // Change TWI speed for nuchuk, which uses Fast-TWI (400kHz)
+  Wire.begin(); //Start I2C communication as master
+  Wire.setClock(400000);
+
+  // nunchuk_init_power(); // A1 and A2 is power supply
+  nunchuk_init();
+  Serial.println("Ready");
 }
  
+float _v = 0;
+float _r = 0;
+float _oldV = 0;
+float _oldR = 0;
+uint32_t _to = 0;
 void loop() {
-  Terminal();
-
+  uint32_t cur_t = millis();
+  if((cur_t-_to >= 50) && nunchuk_read()){
+    _to = cur_t;
+    _v += (nunchuk_joystickY()*5.0/128-_v)*0.1;
+    if(abs(_v-_oldV)>0.05){
+      _oldV = _v;
+      Command('v', _v);
+    }
+    _r += (nunchuk_joystickX()*2.5/128-_r)*0.1;
+    if(abs(_r-_oldR)>0.05){
+      _oldR = _r;
+      Command('r', _r);
+    }
+  } else {
+    Terminal();
+  }
+  delay(10);
 }
