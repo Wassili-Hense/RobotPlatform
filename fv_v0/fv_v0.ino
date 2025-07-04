@@ -93,7 +93,6 @@ struct nMsg {
   float val;
 };
 
-uint8_t tCnt=0;
 uint8_t _sndBuff[sizeof(nMsg)];
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -182,6 +181,18 @@ void setup() {
   Serial.println("Ready");
 }
 
+uint8_t iseCnt=0;
+float iseSum=0;
+void iseFunc(err){
+  iseSum += err*err;
+  iseCnt++;
+  if(iseCnt>99){
+    SendNMsg('E', iseSum/iseCnt);
+    iseCnt=0;
+    iseSum = 0;
+  }
+}
+
 void loop() {
   int8_t err;
   uint8_t st;
@@ -203,12 +214,11 @@ void loop() {
       v = 0;
       turn = 0;
     } else {
-      float aExp = VelocityPID((cgL.velocity - cgR.velocity) - tVelocity);
-      v = AnglePID(a + aExp);
-      if(++tCnt>25){
-        tCnt=0;
-        SendNMsg('E', aExp*180/3.1415926);
-      }      
+      float vErr = (cgL.velocity - cgR.velocity) - tVelocity;
+      float aExp = VelocityPID(vErr);
+      float aErr = a + aExp;
+      v = AnglePID(aErr);
+      iseFunc(aErr);
     }
     if((cgL.GetMotorStatus()&0xC0) == 0x80){
       cgL.Command(v+turn);
