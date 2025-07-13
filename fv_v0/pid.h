@@ -29,10 +29,10 @@ public:
     float output_ramp; //!< Maximum speed of change of the output value
     float limit; //!< Maximum output value
     float output_prev;  //!< last pid output value
+    float integral_prev; //!< last integral component value
 
 protected:
     float error_prev; //!< last tracking error value
-    float integral_prev; //!< last integral component value
     int64_t timestamp_prev; //!< Last execution timestamp
 };
 

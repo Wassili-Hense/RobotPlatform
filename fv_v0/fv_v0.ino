@@ -14,8 +14,10 @@ Cybergear cgR = Cybergear(&twai, 0x04);
 
 float tVelocity = 0;
 float turn = 0;
-PIDController AnglePID(37, 700, 0.55, 0, 10);
-PIDController VelocityPID(1.7*0.001, 47*0.001, 0, 0, 0.3);
+float VelI = 40*0.001;
+float stabK = 0.5;
+PIDController AnglePID(30, 500, 0.55, 0, 10);
+PIDController VelocityPID(1.5*0.001, VelI, 0.01*0.001, 0, 0.3);
 
 uint8_t tgtAddr[] = {0x08, 0xD1, 0xF9, 0x38, 0x2C, 0x70};
 esp_now_peer_info_t peerInfo;
@@ -36,12 +38,21 @@ int8_t Command(char cmd, float value){
       AnglePID.D = value;
       r=0;
       break;
+    case 'k':
+      stabK = value;
+      r=0;
+      break;
     case 'P':
       VelocityPID.P = value*0.001;
       r=0;
       break;
     case 'I':
-      VelocityPID.I = value*0.001;
+      VelI = value*0.001;
+      //VelocityPID.I = value*0.001;
+      r=0;
+      break;
+    case 'D':
+      VelocityPID.D = value*0.001;
       r=0;
       break;
     case 'v':
@@ -50,7 +61,7 @@ int8_t Command(char cmd, float value){
       break;
     case 'r':
       r=0;
-      turn = -value/1.5;
+      turn = -value*0.5;
       break;
     default: 
       r=-33;
@@ -180,19 +191,22 @@ void setup() {
   //cgR.SendFloat(/*ADDR_SPEED_KI*/0x2015, 0.0f);
   Serial.println("Ready");
 }
-
 uint8_t iseCnt=0;
 float iseSum=0;
-void iseFunc(err){
+float stab = 1;
+
+void iseFunc(float err){
   iseSum += err*err;
   iseCnt++;
-  if(iseCnt>99){
-    SendNMsg('E', iseSum/iseCnt);
-    iseCnt=0;
-    iseSum = 0;
+  if(iseCnt>=100){
+    stab = iseSum/iseCnt;
+    SendNMsg('E', stab);
+    iseCnt /= 2;
+    iseSum /= 2;
+    VelocityPID.I = VelI*_constrain(stab, 0.1, 1.0);
+    SendNMsg('I', VelocityPID.integral_prev);
   }
 }
-
 void loop() {
   int8_t err;
   uint8_t st;
@@ -213,12 +227,13 @@ void loop() {
       AnglePID.reset();
       v = 0;
       turn = 0;
+      stab = 1;
     } else {
       float vErr = (cgL.velocity - cgR.velocity) - tVelocity;
       float aExp = VelocityPID(vErr);
-      float aErr = a + aExp;
-      v = AnglePID(aErr);
-      iseFunc(aErr);
+      v = AnglePID(a + aExp);
+
+      iseFunc(vErr*stabK);
     }
     if((cgL.GetMotorStatus()&0xC0) == 0x80){
       cgL.Command(v+turn);

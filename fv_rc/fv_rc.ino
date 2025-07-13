@@ -28,19 +28,16 @@ esp_now_peer_info_t peerInfo;
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   if(status == ESP_NOW_SEND_SUCCESS){
     digitalWrite(LED_BUILTIN, LOW);
-  } else {
-    Serial.println(" - failed");
+  //} else {
+  //  Serial.println("!:-1");
   }
 }
 void Command(char cmd, float val){
   digitalWrite(LED_BUILTIN, HIGH);
   myData.cmd = cmd;
   myData.val = val;
-  Serial.print(cmd);Serial.print("$");Serial.print(val, 8);
   esp_err_t result = esp_now_send(tgtAddr, (uint8_t *) &myData, sizeof(myData));
-  if(result != ESP_OK){
-    Serial.println(" - not connected");
-  }
+  //Serial.print(result == ESP_OK?cmd:'!');Serial.print(":");Serial.println(val, 8);
 }
 
 char _rxBuffer[17];
@@ -70,12 +67,14 @@ void Terminal(){
 }
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  if(len==2 && incomingData[0]==0x11){
-    Serial.print(" - ");Serial.println((int8_t)incomingData[1]);
-  } else if(len==sizeof(myData)){
+  /*if(len==2 && incomingData[0]==0x11){
+    if(incomingData[1]!=0){
+      Serial.print("!:");Serial.println((int8_t)incomingData[1]);
+    }
+  } else */if(len==sizeof(myData)){
     nMsg msg;
     memcpy(&msg, incomingData, sizeof(nMsg));
-    Serial.print(msg.cmd);Serial.print('#');Serial.println(msg.val, 8);
+    Serial.print(msg.cmd);Serial.print(':');Serial.println(msg.val, 8);
   }
 }
 /*
@@ -150,12 +149,12 @@ void loop() {
   uint32_t cur_t = millis();
   if((cur_t-_to >= 50) && nunchuk_read()){
     _to = cur_t;
-    _v += (nunchuk_joystickY()*5.0/128-_v)*0.1;
+    _v += (nunchuk_joystickY()*5.0/128-_v)*0.5;
     if(abs(_v-_oldV)>0.05){
       _oldV = _v;
       Command('v', _v);
     }
-    _r += (nunchuk_joystickX()*2.5/128-_r)*0.1;
+    _r += (nunchuk_joystickX()*2.5/128-_r)*0.5;
     if(abs(_r-_oldR)>0.05){
       _oldR = _r;
       Command('r', _r);
