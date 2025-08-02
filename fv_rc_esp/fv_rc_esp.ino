@@ -2,7 +2,7 @@
 
 // Joystick
 #define I2C_DEV_ADDR 0x17
-#define ANALOG_DELTA 3
+#define ANALOG_DELTA 15
 static uint8_t jrBuff[6];
 static uint8_t jdr = 0;
 static uint16_t jaVal[] = {0, 0, 0};

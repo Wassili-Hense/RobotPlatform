@@ -7,6 +7,7 @@
 
 uint8_t offCnt = 0;
 uint8_t sndBuff[6];
+uint8_t blCnt = 255;
 
 void setup() {
   pinMode(PA5, INPUT_PULLUP);          // Button 5
@@ -25,10 +26,12 @@ void setup() {
   pinMode(PF1, INPUT_PULLUP);          // Button 4
   pinMode(PF7, INPUT_PULLUP);          // Button Ok
 
+  digitalWrite(PB1, HIGH);
+  analogReadResolution(12);
   Wire.begin();
 
   digitalWrite(PA11, HIGH);
-  digitalWrite(PB1, LOW);
+  analogWrite(PB_1_ALT2, 192);
   digitalWrite(PA8, HIGH);
   delay(10);
   digitalWrite(PA8, LOW);
@@ -49,6 +52,8 @@ void loop() {
       if(offCnt>250){
         offCnt = OFF_CNT+1;
       }
+    } else {
+      blCnt = OFF_CNT;
     }
   } else if(offCnt>0){
     offCnt--;
@@ -77,5 +82,9 @@ void loop() {
   }
   Wire.endTransmission(true);
 
+  if(blCnt>0){
+    analogWrite(PB_1_ALT2, 256-blCnt);
+    blCnt--;
+  }
   delay(DELAY_MS);
 }
