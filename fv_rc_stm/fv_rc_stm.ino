@@ -1,55 +1,77 @@
 //CPU - STM32F051C8Tx
 
-#include "Wire.h"
-#define I2C_DEV_ADDR 0x17
-#define DELAY_MS 10
+#include "TInput.hpp"
+
+#define DELAY_MS 2
 #define OFF_CNT (1000/DELAY_MS)
 
-uint8_t offCnt = 0;
-uint8_t sndBuff[6];
-uint8_t blCnt = 255;
+#define I2C_DEV_ADDR 0x17
+
+//uint8_t sndBuff[6];
+static uint16_t blCnt = OFF_CNT*2;
+
+TInput inputs[] = {
+  TInput(true, PA0,  'V'),     // Vcc [1000 - 1136]
+  TInput(true, PA1,  'X'),
+  TInput(true, PA2,  'Y'),
+  TInput(true, PA3,  'U'),
+  TInput(false, PA5,   5),     // Button 5
+  TInput(false, PA6,   3),     // Button 3
+  TInput(false, PA7,   8),     // Button Down
+  TInput(false, PA12,  1),     // Button ON
+  TInput(false, PB0,   7),     // Button UP
+  TInput(false, PB10,  2),     // Button Fire
+  TInput(false, PC13, 10),     // Button Back
+  TInput(false, PC15,  6),     // Button 6
+  TInput(false, PF1,   4),     // Button 4
+  TInput(false, PF7,   9)      // Button Ok
+};
+
+#define INPUTS_CNT (sizeof(inputs)/sizeof(TInput))
+void Send(uint8_t cmd, uint16_t value){
+  Wire.beginTransmission(I2C_DEV_ADDR);
+  Wire.write(cmd);
+  Wire.write((uint8_t)(value>>8));
+  Wire.write((uint8_t)value);
+  Wire.endTransmission(true);
+}
 
 void setup() {
-  pinMode(PA5, INPUT_PULLUP);          // Button 5
-  pinMode(PA6, INPUT_PULLUP);          // Button 3
-  pinMode(PA7, INPUT_PULLUP);          // Button Down
-  pinMode(PA8, OUTPUT);                // Beep
-  pinMode(PA11, OUTPUT);               // Power ON
-  pinMode(PA12, INPUT);                // Button ON
-  pinMode(PB0, INPUT_PULLUP);          // Button UP
-  pinMode(PB1, OUTPUT);                // LCD Backlight
-  Wire.setSCL(PB8);                    // SCL
-  Wire.setSDA(PB9);                    // SDA
-  pinMode(PB10, INPUT_PULLUP);         // Button Fire
-  pinMode(PC13, INPUT_PULLUP);         // Button Back
-  pinMode(PC15, INPUT_PULLUP);         // Button 6
-  pinMode(PF1, INPUT_PULLUP);          // Button 4
-  pinMode(PF7, INPUT_PULLUP);          // Button Ok
-
-  digitalWrite(PB1, HIGH);
   analogReadResolution(12);
+
+  pinMode(PA8, OUTPUT);        // Beep
+  pinMode(PA11, OUTPUT);       // Power ON
+  pinMode(PB1, OUTPUT);        // LCD Backlight
+  Wire.setSCL(PB8);            // SCL
+  Wire.setSDA(PB9);            // SDA
+  TInput::SendFunc = &Send;
+  for(uint8_t i=0; i<INPUTS_CNT; i++){
+    inputs[i].Init();
+  }
+
+  digitalWrite(PB1, HIGH);     // LCD Backlight OFF
   Wire.begin();
 
-  digitalWrite(PA11, HIGH);
-  analogWrite(PB_1_ALT2, 192);
-  digitalWrite(PA8, HIGH);
-  delay(10);
-  digitalWrite(PA8, LOW);
+  digitalWrite(PA11, HIGH);    // Power ON
+  analogWrite(PB_1_ALT2, 192); // LCD Backlight 25%
+  tone(PA8, 600, 25);
+  
   while(!digitalRead(PA12)){
     delay(10);
   }
 }
 
-void loop() {
-  uint32_t tmp;
-  uint8_t b1 = digitalRead(PA12)?0:0x10;
+void PowerOff(){
+  static uint16_t offCnt = 0;
 
-  if(b1){
+  if(!digitalRead(PA12)){
     offCnt++;
     if(offCnt>OFF_CNT){
-      digitalWrite(PA8, offCnt == OFF_CNT+1?HIGH:LOW);  // Beep
-      digitalWrite(PB1, HIGH);
-      if(offCnt>250){
+      if(offCnt == OFF_CNT+2){
+        tone(PA8, 1500, 10);
+        digitalWrite(PB1, HIGH);
+      }
+      if(offCnt*3>OFF_CNT*4){
         offCnt = OFF_CNT+1;
       }
     } else {
@@ -61,30 +83,32 @@ void loop() {
       digitalWrite(PA11, LOW);  // Power OFF
     }
   }
-  tmp = analogRead(PA3);  // V_USB
-  b1 = b1 | (digitalRead(PB10)?0:0x20) | (tmp>240?0x80:0); 
+}
 
-  tmp = analogRead(PA0);  // Vcc [250 - 284]
-  sndBuff[0] = (uint8_t)(tmp>>4);
-  sndBuff[1] = (tmp&0x0F) | b1;  // ON, Fire, , USB
-
-  tmp = analogRead(PA1);  // X
-  sndBuff[2] = (uint8_t)(tmp>>4);
-  sndBuff[3] = (tmp&0x0F) | (digitalRead(PB0)?0:0x10) | (digitalRead(PA7)?0:0x20) | (digitalRead(PF7)?0:0x40) | (digitalRead(PC13)?0:0x80); // Up, Down, Ok, Back
-
-  tmp = analogRead(PA2);  // Y
-  sndBuff[4] = (uint8_t)(tmp>>4);
-  sndBuff[5] = (tmp&0x0F) | (digitalRead(PA6)?0:0x10) | (digitalRead(PF1)?0:0x20) | (digitalRead(PA5)?0:0x40) | (digitalRead(PC15)?0:0x80); // B3, B4, B5, B6
-
-  Wire.beginTransmission(I2C_DEV_ADDR);
-  for(uint8_t i = 0; i<6;i++){
-    Wire.write(sndBuff[i]);
-  }
-  Wire.endTransmission(true);
-
+void BackLight(){
   if(blCnt>0){
-    analogWrite(PB_1_ALT2, 256-blCnt);
+    analogWrite(PB_1_ALT2, blCnt<256?(256-blCnt):0);
     blCnt--;
   }
+}
+
+void loop() {
+  static uint8_t valIdx = 0;
+  for(uint8_t i=0; i<INPUTS_CNT; i++){
+    inputs[i].Tick();
+  }
+  
+  
+  while(true){
+    if(inputs[valIdx].Send()) break;
+    if(valIdx>=INPUTS_CNT-1){
+      valIdx=0;
+      break;
+    } else {
+      valIdx++;
+    }
+  }
+  PowerOff();
+  BackLight();
   delay(DELAY_MS);
 }
