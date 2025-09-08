@@ -14,13 +14,14 @@ nMsg myData;
 esp_now_peer_info_t peerInfo;
 
 // callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+//void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  // (const esp_now_send_info_t *tx_info, esp_now_send_status_t status_
   //if(status == ESP_NOW_SEND_SUCCESS){
   //  digitalWrite(LED_BUILTIN, LOW);
   //} else {
   //  Serial.println("!:-1");
   //}
-}
+//}
 void Command(char cmd, float val){
   //digitalWrite(LED_BUILTIN, HIGH);
   myData.cmd = cmd;
@@ -103,11 +104,10 @@ void setup() {
   }
 
   // Init ESP-NOW
-  if (esp_now_init() = ESP_OK) {
+  if (esp_now_init() == ESP_OK) {
     // Once ESPNow is successfully Init, we will register for Send CB to
     // get the status of Transmitted packet
-    esp_now_register_send_cb(OnDataSent);
-  
+    //esp_now_register_send_cb(OnDataSent);
     // Register peer
     memcpy(peerInfo.peer_addr, tgtAddr, 6);
     peerInfo.channel = 0;  
@@ -127,8 +127,8 @@ void setup() {
 }
 
 float norm(uint16_t val){
-  float r = val/2048.0;
-  if(r<0) return 0;
+  float r = ((float)val - 2020)/2000;
+  if(r<-1) return -1;
   if(r>1) return 1;
   return r;
 }
@@ -136,31 +136,34 @@ float norm(uint16_t val){
 void loop() {
   if(jdr){
     jdr = 0;
+
+    uint16_t v16 = (((uint16_t)jrBuff[1])<<8) | jrBuff[2];
+    float val;
+
+    switch(jrBuff[0]){
+    case 'B':
+      val = (jrBuff[1]?1:-1)*jrBuff[2];
+      break;
+    case 'U':
+      val = v16*0.0045-1.1;
+      usbOn = val > 3.5;
+      return;
+    case 'V':
+      val = v16*0.0045-1.1;
+      break;
+    case 'X':
+      val = norm(v16);
+      Command('r', val);
+      break;  
+    case 'Y':
+      val = -norm(v16);
+      Command('v', val);
+      break;  
+    }
     if(sOpen){
       Serial.print((char)jrBuff[0]);
       Serial.print(": ");
-    }
-    if(jrBuff[0]=='B'){
-      if(sOpen){
-        Serial.print(jrBuff[1]?'+':'-');
-        Serial.println(jrBuff[2]);  
-      }
-    } else {
-      uint16_t val = (((uint16_t)jrBuff[1])<<8) | jrBuff[2];
-      if(sOpen){
-        Serial.println(val);
-      }
-      switch(jrBuff[0]){
-      case 'U':
-        usbOn = val > 3*256;
-        break;
-      case 'X':
-        Command('r', norm(val-2010));
-        break;  
-      case 'Y':
-        Command('v', norm(2010-val));
-        break;  
-      }
+      Serial.println(val);
     }
   } else {
     if(sOpen != usbOn){
