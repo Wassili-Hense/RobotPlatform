@@ -87,6 +87,9 @@ class TInput{
     }
     return 0;
   }
+  uint16_t Value(){
+    return _value;
+  }
 };
 
 tsend_f_cb TInput::SendFunc;

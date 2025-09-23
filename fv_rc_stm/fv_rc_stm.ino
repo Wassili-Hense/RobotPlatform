@@ -64,7 +64,16 @@ void setup() {
 void PowerOff(){
   static uint16_t offCnt = 0;
 
-  if(!digitalRead(PA12)){
+  if(inputs[0].Value() < 950){  // Vbat < 3.2V
+    if(offCnt>=OFF_CNT){
+      digitalWrite(PA11, LOW);  // Power OFF
+    } else {
+      offCnt++;
+      if(offCnt == OFF_CNT/2){
+        tone(PA8, 500, 0);
+      }
+    } 
+  } else if(!digitalRead(PA12)){
     offCnt++;
     if(offCnt>OFF_CNT){
       if(offCnt == OFF_CNT+2){
@@ -78,9 +87,10 @@ void PowerOff(){
       blCnt = OFF_CNT;
     }
   } else if(offCnt>0){
-    offCnt--;
     if(offCnt>=OFF_CNT){
       digitalWrite(PA11, LOW);  // Power OFF
+    } else {
+      offCnt--;
     }
   }
 }
