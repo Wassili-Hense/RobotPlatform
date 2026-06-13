@@ -27,8 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "adc_inputs.h"
-#include "st7735.h"
+#include "App.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,7 +48,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-extern TIM_HandleTypeDef htim14;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,10 +58,6 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static inline void SetBackLight(uint16_t pulse)
-{
-    __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, pulse);
-}
 /* USER CODE END 0 */
 
 /**
@@ -103,31 +97,16 @@ int main(void)
   MX_SPI2_Init();
   MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
-  if (HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1) != HAL_OK)
-  {
-	Error_Handler();
-  }
-
-  AdcInputs_Init();
-  ST7735_Init();
-
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET); // Power ON
-  SetBackLight(63);
-
-  ST7735_Clear(ST7735_BLACK);
-  //ST7735_FillRect(152, 0, 8, 80, ST7735_GREEN);
-  //ST7735_DrawText(10, 10, "Hello", ST7735_RED, ST7735_BLACK);
-  //ST7735_DrawText(30, 20, "World!!", ST7735_YELLOW, ST7735_BLACK);
-  //ST7735_FillCircle(100, 60, 20, ST7735_WHITE);
+  App_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+     App_Run();
     /* USER CODE END WHILE */
-	  ST7735_Process();
-	  __WFI();
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -178,7 +157,6 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
 
 /**

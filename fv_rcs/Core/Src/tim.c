@@ -134,7 +134,10 @@ void MX_TIM14_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM14_Init 2 */
-
+  if (HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1) != HAL_OK)
+  {
+	Error_Handler();
+  }
   /* USER CODE END TIM14_Init 2 */
   HAL_TIM_MspPostInit(&htim14);
 
@@ -298,6 +301,5 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
 }
 
 /* USER CODE BEGIN 1 */
-
 /* USER CODE END 1 */
 
