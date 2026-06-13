@@ -26,6 +26,7 @@
  * - для рендера одного символа 7x10 + spacing
  */
 #define ST7735_IO_BUFFER_SIZE (ST7735_TEXT_CELL_WIDTH * ST7735_FONT_7X10_HEIGHT * 2U)
+#define ST7735_COLOR_CHUNK_PIXELS (ST7735_IO_BUFFER_SIZE / 2U)
 
 typedef enum
 {
@@ -34,6 +35,13 @@ typedef enum
     ST7735_CMD_FILL_CIRCLE,
     ST7735_CMD_DRAW_TEXT
 } ST7735_CommandType;
+
+typedef enum
+{
+    ST7735_TX_NONE = 0,
+    ST7735_TX_COLOR_REPEAT,
+    ST7735_TX_CHAR
+} ST7735_TxType;
 
 typedef struct
 {
@@ -90,6 +98,12 @@ typedef struct
             int16_t y;
             int16_t d;
             uint8_t firstStepDone;
+
+            uint8_t segCount;
+            uint8_t segIndex;
+            uint8_t segX[4];
+            uint8_t segY[4];
+            uint8_t segH[4];
         } circle;
 
         struct
@@ -101,6 +115,13 @@ typedef struct
     } state;
 } ST7735_ActiveJob;
 
+typedef struct
+{
+    uint8_t type;
+    uint16_t remainingPixels;
+    uint16_t charBytes;
+} ST7735_TxState;
+
 /* ---------- Runtime state ---------- */
 
 static ST7735_Command s_queue[ST7735_QUEUE_SIZE];
@@ -109,7 +130,11 @@ static uint8_t s_queueTail = 0U;
 static uint8_t s_queueCount = 0U;
 
 static ST7735_ActiveJob s_active;
+static ST7735_TxState s_tx;
 static uint8_t s_ioBuffer[ST7735_IO_BUFFER_SIZE];
+
+static volatile uint8_t s_spiDmaBusy = 0U;
+static volatile uint8_t s_spiDmaError = 0U;
 
 /* ---------- Low-level helpers ---------- */
 
@@ -199,6 +224,199 @@ static void ST7735_SetAddressWindow(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t 
     ST7735_WriteCommand(0x2C);
 }
 
+/* ---------- DMA helpers ---------- */
+
+static uint8_t ST7735_StartDma(uint8_t* data, uint16_t size)
+{
+    s_spiDmaError = 0U;
+
+    if (HAL_SPI_Transmit_DMA(&hspi2, data, size) != HAL_OK)
+        return 0U;
+
+    s_spiDmaBusy = 1U;
+    return 1U;
+}
+
+static void ST7735_FillColorBuffer(uint16_t color)
+{
+    uint8_t hi = (uint8_t)(color >> 8);
+    uint8_t lo = (uint8_t)(color & 0xFFU);
+    uint8_t i;
+
+    for (i = 0U; i < sizeof(s_ioBuffer); i += 2U)
+    {
+        s_ioBuffer[i] = hi;
+        s_ioBuffer[i + 1U] = lo;
+    }
+}
+
+static uint8_t ST7735_BeginColorRepeat(uint16_t color, uint16_t pixelCount)
+{
+    uint16_t chunkPixels;
+
+    ST7735_FillColorBuffer(color);
+
+    ST7735_Select();
+    ST7735_DC_Data();
+
+    s_tx.type = ST7735_TX_COLOR_REPEAT;
+    s_tx.remainingPixels = pixelCount;
+    s_tx.charBytes = 0U;
+
+    chunkPixels = (s_tx.remainingPixels > ST7735_COLOR_CHUNK_PIXELS)
+                ? ST7735_COLOR_CHUNK_PIXELS
+                : s_tx.remainingPixels;
+
+    if (chunkPixels == 0U)
+    {
+        ST7735_Unselect();
+        s_tx.type = ST7735_TX_NONE;
+        return 1U;
+    }
+
+    if (!ST7735_StartDma(s_ioBuffer, (uint16_t)(chunkPixels * 2U)))
+    {
+        HAL_SPI_Transmit(&hspi2, s_ioBuffer, (uint16_t)(chunkPixels * 2U), HAL_MAX_DELAY);
+        s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+    }
+    else
+    {
+        s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+        return 0U;
+    }
+
+    while (s_tx.remainingPixels > 0U)
+    {
+        chunkPixels = (s_tx.remainingPixels > ST7735_COLOR_CHUNK_PIXELS)
+                    ? ST7735_COLOR_CHUNK_PIXELS
+                    : s_tx.remainingPixels;
+        HAL_SPI_Transmit(&hspi2, s_ioBuffer, (uint16_t)(chunkPixels * 2U), HAL_MAX_DELAY);
+        s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+    }
+
+    ST7735_Unselect();
+    s_tx.type = ST7735_TX_NONE;
+    return 1U;
+}
+
+static uint8_t ST7735_ContinueColorRepeat(void)
+{
+    uint16_t chunkPixels;
+
+    if (s_tx.type != ST7735_TX_COLOR_REPEAT)
+        return 1U;
+
+    if (s_spiDmaBusy != 0U)
+        return 0U;
+
+    if (s_spiDmaError != 0U)
+    {
+        ST7735_Unselect();
+        s_tx.type = ST7735_TX_NONE;
+        return 1U;
+    }
+
+    if (s_tx.remainingPixels == 0U)
+    {
+        ST7735_Unselect();
+        s_tx.type = ST7735_TX_NONE;
+        return 1U;
+    }
+
+    chunkPixels = (s_tx.remainingPixels > ST7735_COLOR_CHUNK_PIXELS)
+                ? ST7735_COLOR_CHUNK_PIXELS
+                : s_tx.remainingPixels;
+
+    if (!ST7735_StartDma(s_ioBuffer, (uint16_t)(chunkPixels * 2U)))
+    {
+        HAL_SPI_Transmit(&hspi2, s_ioBuffer, (uint16_t)(chunkPixels * 2U), HAL_MAX_DELAY);
+        s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+
+        while (s_tx.remainingPixels > 0U)
+        {
+            chunkPixels = (s_tx.remainingPixels > ST7735_COLOR_CHUNK_PIXELS)
+                        ? ST7735_COLOR_CHUNK_PIXELS
+                        : s_tx.remainingPixels;
+            HAL_SPI_Transmit(&hspi2, s_ioBuffer, (uint16_t)(chunkPixels * 2U), HAL_MAX_DELAY);
+            s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+        }
+
+        ST7735_Unselect();
+        s_tx.type = ST7735_TX_NONE;
+        return 1U;
+    }
+
+    s_tx.remainingPixels = (uint16_t)(s_tx.remainingPixels - chunkPixels);
+    return 0U;
+}
+
+static uint8_t ST7735_BeginCharTransfer(uint8_t x, uint8_t y, char ch, uint16_t color, uint16_t bgColor)
+{
+    uint16_t p = 0U;
+    const uint8_t* glyph;
+    uint8_t row;
+    uint8_t col;
+
+    if (((uint8_t)ch < ST7735_FONT_7X10_FIRST_CHAR) || ((uint8_t)ch > ST7735_FONT_7X10_LAST_CHAR))
+        ch = '?';
+
+    glyph = &Font7x10[ST7735_FONT_GLYPH_INDEX(ch)];
+
+    for (row = 0U; row < ST7735_FONT_7X10_HEIGHT; row++)
+    {
+        uint8_t rowBits = glyph[row];
+
+        for (col = 0U; col < ST7735_FONT_7X10_WIDTH; col++)
+        {
+            uint16_t drawColor =
+                (rowBits & (uint8_t)(0x80U >> col)) ? color : bgColor;
+
+            s_ioBuffer[p++] = (uint8_t)(drawColor >> 8);
+            s_ioBuffer[p++] = (uint8_t)(drawColor & 0xFFU);
+        }
+
+        s_ioBuffer[p++] = (uint8_t)(bgColor >> 8);
+        s_ioBuffer[p++] = (uint8_t)(bgColor & 0xFFU);
+    }
+
+    ST7735_SetAddressWindow(
+        x,
+        y,
+        (uint8_t)(x + ST7735_TEXT_CELL_WIDTH - 1U),
+        (uint8_t)(y + ST7735_FONT_7X10_HEIGHT - 1U));
+
+    ST7735_Select();
+    ST7735_DC_Data();
+
+    s_tx.type = ST7735_TX_CHAR;
+    s_tx.remainingPixels = 0U;
+    s_tx.charBytes = p;
+
+    if (!ST7735_StartDma(s_ioBuffer, p))
+    {
+        HAL_SPI_Transmit(&hspi2, s_ioBuffer, p, HAL_MAX_DELAY);
+        ST7735_Unselect();
+        s_tx.type = ST7735_TX_NONE;
+        return 1U;
+    }
+
+    return 0U;
+}
+
+static uint8_t ST7735_ContinueCharTransfer(void)
+{
+    if (s_tx.type != ST7735_TX_CHAR)
+        return 1U;
+
+    if (s_spiDmaBusy != 0U)
+        return 0U;
+
+    ST7735_Unselect();
+    s_tx.type = ST7735_TX_NONE;
+    s_tx.charBytes = 0U;
+    return 1U;
+}
+
 /* ---------- Queue helpers ---------- */
 
 static void ST7735_QueueReset(void)
@@ -234,98 +452,63 @@ static void ST7735_RuntimeInit(void)
 {
     ST7735_QueueReset();
     memset(&s_active, 0, sizeof(s_active));
+    memset(&s_tx, 0, sizeof(s_tx));
+    s_spiDmaBusy = 0U;
+    s_spiDmaError = 0U;
 }
 
-/* ---------- Shared drawing helpers ---------- */
+/* ---------- Circle helpers ---------- */
 
-static void ST7735_WriteColorRepeat(uint16_t color, uint32_t count)
+static void ST7735_CircleResetSegments(void)
 {
-    uint8_t hi = (uint8_t)(color >> 8);
-    uint8_t lo = (uint8_t)(color & 0xFFU);
-    uint8_t i;
-    uint8_t chunkPixels;
-
-    for (i = 0U; i < sizeof(s_ioBuffer); i += 2U)
-    {
-        s_ioBuffer[i] = hi;
-        s_ioBuffer[i + 1U] = lo;
-    }
-
-    ST7735_Select();
-    ST7735_DC_Data();
-
-    while (count > 0U)
-    {
-        chunkPixels = (count > (sizeof(s_ioBuffer) / 2U))
-                        ? (uint8_t)(sizeof(s_ioBuffer) / 2U)
-                        : (uint8_t)count;
-
-        HAL_SPI_Transmit(&hspi2, s_ioBuffer, (uint16_t)(chunkPixels * 2U), HAL_MAX_DELAY);
-        count -= chunkPixels;
-    }
-
-    ST7735_Unselect();
+    s_active.state.circle.segCount = 0U;
+    s_active.state.circle.segIndex = 0U;
 }
 
-static void ST7735_DrawFastVLineNow(uint8_t x, uint8_t y, uint8_t h, uint16_t color)
+static void ST7735_CircleAddSegment(int16_t x, int16_t y, int16_t h)
 {
-    if ((x >= ST7735_WIDTH) || (y >= ST7735_HEIGHT) || (h == 0U))
+    uint8_t idx;
+
+    if (h <= 0)
         return;
 
-    if ((uint16_t)y + h > ST7735_HEIGHT)
-        h = (uint8_t)(ST7735_HEIGHT - y);
+    if ((x < 0) || (x >= (int16_t)ST7735_WIDTH))
+        return;
+
+    if (y < 0)
+    {
+        h += y;
+        y = 0;
+    }
+
+    if (y >= (int16_t)ST7735_HEIGHT)
+        return;
+
+    if ((y + h) > (int16_t)ST7735_HEIGHT)
+        h = (int16_t)ST7735_HEIGHT - y;
+
+    if (h <= 0)
+        return;
+
+    idx = s_active.state.circle.segCount;
+    if (idx >= 4U)
+        return;
+
+    s_active.state.circle.segX[idx] = (uint8_t)x;
+    s_active.state.circle.segY[idx] = (uint8_t)y;
+    s_active.state.circle.segH[idx] = (uint8_t)h;
+    s_active.state.circle.segCount++;
+}
+
+static uint8_t ST7735_CircleStartCurrentSegment(uint16_t color)
+{
+    uint8_t idx = s_active.state.circle.segIndex;
+    uint8_t x = s_active.state.circle.segX[idx];
+    uint8_t y = s_active.state.circle.segY[idx];
+    uint8_t h = s_active.state.circle.segH[idx];
 
     ST7735_SetAddressWindow(x, y, x, (uint8_t)(y + h - 1U));
-    ST7735_WriteColorRepeat(color, h);
-}
-
-static void ST7735_DrawCharNow(uint8_t x, uint8_t y, char ch, uint16_t color, uint16_t bgColor)
-{
-    uint16_t p = 0U;
-    const uint8_t* glyph;
-    uint8_t row;
-    uint8_t col;
-
-    if (((uint8_t)ch < ST7735_FONT_7X10_FIRST_CHAR) || ((uint8_t)ch > ST7735_FONT_7X10_LAST_CHAR))
-        ch = '?';
-
-    if ((x >= ST7735_WIDTH) || (y >= ST7735_HEIGHT))
-        return;
-
-    if (((uint16_t)x + ST7735_TEXT_CELL_WIDTH > ST7735_WIDTH) ||
-        ((uint16_t)y + ST7735_FONT_7X10_HEIGHT > ST7735_HEIGHT))
-        return;
-
-    glyph = &Font7x10[ST7735_FONT_GLYPH_INDEX(ch)];
-
-    for (row = 0U; row < ST7735_FONT_7X10_HEIGHT; row++)
-    {
-        uint8_t rowBits = glyph[row];
-
-        for (col = 0U; col < ST7735_FONT_7X10_WIDTH; col++)
-        {
-            uint16_t drawColor =
-                (rowBits & (uint8_t)(0x80U >> col)) ? color : bgColor;
-
-            s_ioBuffer[p++] = (uint8_t)(drawColor >> 8);
-            s_ioBuffer[p++] = (uint8_t)(drawColor & 0xFFU);
-        }
-
-        /* spacing column */
-        s_ioBuffer[p++] = (uint8_t)(bgColor >> 8);
-        s_ioBuffer[p++] = (uint8_t)(bgColor & 0xFFU);
-    }
-
-    ST7735_SetAddressWindow(
-        x,
-        y,
-        (uint8_t)(x + ST7735_TEXT_CELL_WIDTH - 1U),
-        (uint8_t)(y + ST7735_FONT_7X10_HEIGHT - 1U));
-
-    ST7735_Select();
-    ST7735_DC_Data();
-    HAL_SPI_Transmit(&hspi2, s_ioBuffer, p, HAL_MAX_DELAY);
-    ST7735_Unselect();
+    return ST7735_BeginColorRepeat(color, h);
 }
 
 /* ---------- Active command helpers ---------- */
@@ -351,6 +534,7 @@ static uint8_t ST7735_StartNextCommand(void)
             s_active.state.circle.y = s_active.cmd.data.fillCircle.r;
             s_active.state.circle.d = 1 - s_active.cmd.data.fillCircle.r;
             s_active.state.circle.firstStepDone = 0U;
+            ST7735_CircleResetSegments();
             break;
 
         case ST7735_CMD_DRAW_TEXT:
@@ -370,27 +554,50 @@ static uint8_t ST7735_StartNextCommand(void)
 
 static uint8_t ST7735_ProcessRectLike(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color)
 {
-    uint8_t row = s_active.state.rect.currentRow;
+    if (s_tx.type == ST7735_TX_COLOR_REPEAT)
+    {
+        if (!ST7735_ContinueColorRepeat())
+            return 0U;
 
-    if (row >= h)
+        s_active.state.rect.currentRow++;
+        return (s_active.state.rect.currentRow >= h) ? 1U : 0U;
+    }
+
+    if (s_active.state.rect.currentRow >= h)
         return 1U;
 
     ST7735_SetAddressWindow(
         x,
-        (uint8_t)(y + row),
+        (uint8_t)(y + s_active.state.rect.currentRow),
         (uint8_t)(x + w - 1U),
-        (uint8_t)(y + row));
+        (uint8_t)(y + s_active.state.rect.currentRow));
 
-    ST7735_WriteColorRepeat(color, w);
+    if (ST7735_BeginColorRepeat(color, w))
+    {
+        s_active.state.rect.currentRow++;
+        return (s_active.state.rect.currentRow >= h) ? 1U : 0U;
+    }
 
-    s_active.state.rect.currentRow++;
-    return (s_active.state.rect.currentRow >= h) ? 1U : 0U;
+    return 0U;
 }
 
 static uint8_t ST7735_ProcessDrawTextStep(void)
 {
     ST7735_DrawTextCmd* t = &s_active.cmd.data.drawText;
-    char ch = t->text[s_active.state.text.index];
+    char ch;
+
+    if (s_tx.type == ST7735_TX_CHAR)
+    {
+        if (!ST7735_ContinueCharTransfer())
+            return 0U;
+
+        s_active.state.text.cursorX =
+            (uint8_t)(s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH);
+        s_active.state.text.index++;
+        return 0U;
+    }
+
+    ch = t->text[s_active.state.text.index];
 
     if (ch == '\0')
         return 1U;
@@ -414,16 +621,17 @@ static uint8_t ST7735_ProcessDrawTextStep(void)
     if ((uint16_t)s_active.state.text.cursorY + ST7735_FONT_7X10_HEIGHT > ST7735_HEIGHT)
         return 1U;
 
-    ST7735_DrawCharNow(
-        s_active.state.text.cursorX,
-        s_active.state.text.cursorY,
-        ch,
-        t->color,
-        t->bgColor);
-
-    s_active.state.text.cursorX =
-        (uint8_t)(s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH);
-    s_active.state.text.index++;
+    if (ST7735_BeginCharTransfer(
+            s_active.state.text.cursorX,
+            s_active.state.text.cursorY,
+            ch,
+            t->color,
+            t->bgColor))
+    {
+        s_active.state.text.cursorX =
+            (uint8_t)(s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH);
+        s_active.state.text.index++;
+    }
 
     return 0U;
 }
@@ -431,38 +639,62 @@ static uint8_t ST7735_ProcessDrawTextStep(void)
 static uint8_t ST7735_ProcessFillCircleStep(void)
 {
     ST7735_FillCircleCmd* c = &s_active.cmd.data.fillCircle;
-    int16_t x = s_active.state.circle.x;
-    int16_t y = s_active.state.circle.y;
-    int16_t d = s_active.state.circle.d;
+    int16_t x;
+    int16_t y;
+    int16_t d;
 
     if (c->r == 0U)
         return 1U;
 
-    if (!s_active.state.circle.firstStepDone)
+    if (s_tx.type == ST7735_TX_COLOR_REPEAT)
     {
-        if (c->x0 < ST7735_WIDTH)
-        {
-            int16_t yStart = (int16_t)c->y0 - c->r;
-            int16_t yEnd = (int16_t)c->y0 + c->r;
+        if (!ST7735_ContinueColorRepeat())
+            return 0U;
 
-            if (yStart < 0)
-                yStart = 0;
-            if (yEnd >= (int16_t)ST7735_HEIGHT)
-                yEnd = (int16_t)ST7735_HEIGHT - 1;
+        s_active.state.circle.segIndex++;
+        if (s_active.state.circle.segIndex < s_active.state.circle.segCount)
+            return 0U;
 
-            if (yEnd >= yStart)
-            {
-                ST7735_DrawFastVLineNow(
-                    c->x0,
-                    (uint8_t)yStart,
-                    (uint8_t)(yEnd - yStart + 1),
-                    c->color);
-            }
-        }
-
-        s_active.state.circle.firstStepDone = 1U;
+        ST7735_CircleResetSegments();
         return 0U;
     }
+
+    if (s_active.state.circle.segCount > 0U)
+    {
+        if (ST7735_CircleStartCurrentSegment(c->color))
+        {
+            s_active.state.circle.segIndex++;
+            if (s_active.state.circle.segIndex >= s_active.state.circle.segCount)
+                ST7735_CircleResetSegments();
+        }
+        return 0U;
+    }
+
+    if (!s_active.state.circle.firstStepDone)
+    {
+        s_active.state.circle.firstStepDone = 1U;
+        ST7735_CircleResetSegments();
+        ST7735_CircleAddSegment(
+            c->x0,
+            (int16_t)c->y0 - c->r,
+            (int16_t)(2 * c->r + 1));
+
+        if (s_active.state.circle.segCount == 0U)
+            return 0U;
+
+        if (ST7735_CircleStartCurrentSegment(c->color))
+        {
+            s_active.state.circle.segIndex++;
+            if (s_active.state.circle.segIndex >= s_active.state.circle.segCount)
+                ST7735_CircleResetSegments();
+        }
+
+        return 0U;
+    }
+
+    x = s_active.state.circle.x;
+    y = s_active.state.circle.y;
+    d = s_active.state.circle.d;
 
     if (x >= y)
         return 1U;
@@ -476,75 +708,27 @@ static uint8_t ST7735_ProcessFillCircleStep(void)
         d += 2 * (x - y) + 5;
         y--;
     }
-
     x++;
 
     s_active.state.circle.x = x;
     s_active.state.circle.y = y;
     s_active.state.circle.d = d;
 
-    if ((((int16_t)c->x0 + x) >= 0) && (((int16_t)c->x0 + x) < (int16_t)ST7735_WIDTH))
+    ST7735_CircleResetSegments();
+
+    ST7735_CircleAddSegment((int16_t)c->x0 + x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 - x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 + y, (int16_t)c->y0 - x, (int16_t)(2 * x + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 - y, (int16_t)c->y0 - x, (int16_t)(2 * x + 1));
+
+    if (s_active.state.circle.segCount == 0U)
+        return 0U;
+
+    if (ST7735_CircleStartCurrentSegment(c->color))
     {
-        int16_t ys = (int16_t)c->y0 - y;
-        int16_t ye = (int16_t)c->y0 + y;
-
-        if (ys < 0)
-            ys = 0;
-        if (ye >= (int16_t)ST7735_HEIGHT)
-            ye = (int16_t)ST7735_HEIGHT - 1;
-
-        if (ye >= ys)
-        {
-            ST7735_DrawFastVLineNow((uint8_t)(c->x0 + x), (uint8_t)ys, (uint8_t)(ye - ys + 1), c->color);
-        }
-    }
-
-    if ((((int16_t)c->x0 - x) >= 0) && (((int16_t)c->x0 - x) < (int16_t)ST7735_WIDTH))
-    {
-        int16_t ys = (int16_t)c->y0 - y;
-        int16_t ye = (int16_t)c->y0 + y;
-
-        if (ys < 0)
-            ys = 0;
-        if (ye >= (int16_t)ST7735_HEIGHT)
-            ye = (int16_t)ST7735_HEIGHT - 1;
-
-        if (ye >= ys)
-        {
-            ST7735_DrawFastVLineNow((uint8_t)(c->x0 - x), (uint8_t)ys, (uint8_t)(ye - ys + 1), c->color);
-        }
-    }
-
-    if ((((int16_t)c->x0 + y) >= 0) && (((int16_t)c->x0 + y) < (int16_t)ST7735_WIDTH))
-    {
-        int16_t ys = (int16_t)c->y0 - x;
-        int16_t ye = (int16_t)c->y0 + x;
-
-        if (ys < 0)
-            ys = 0;
-        if (ye >= (int16_t)ST7735_HEIGHT)
-            ye = (int16_t)ST7735_HEIGHT - 1;
-
-        if (ye >= ys)
-        {
-            ST7735_DrawFastVLineNow((uint8_t)(c->x0 + y), (uint8_t)ys, (uint8_t)(ye - ys + 1), c->color);
-        }
-    }
-
-    if ((((int16_t)c->x0 - y) >= 0) && (((int16_t)c->x0 - y) < (int16_t)ST7735_WIDTH))
-    {
-        int16_t ys = (int16_t)c->y0 - x;
-        int16_t ye = (int16_t)c->y0 + x;
-
-        if (ys < 0)
-            ys = 0;
-        if (ye >= (int16_t)ST7735_HEIGHT)
-            ye = (int16_t)ST7735_HEIGHT - 1;
-
-        if (ye >= ys)
-        {
-            ST7735_DrawFastVLineNow((uint8_t)(c->x0 - y), (uint8_t)ys, (uint8_t)(ye - ys + 1), c->color);
-        }
+        s_active.state.circle.segIndex++;
+        if (s_active.state.circle.segIndex >= s_active.state.circle.segCount)
+            ST7735_CircleResetSegments();
     }
 
     return 0U;
@@ -609,6 +793,8 @@ uint8_t ST7735_Clear(uint16_t color)
     /* Clear прерывает текущую команду и очищает очередь */
     s_active.busy = 0U;
     s_active.cmd.type = ST7735_CMD_NONE;
+    s_tx.type = ST7735_TX_NONE;
+    s_spiDmaBusy = 0U;
     ST7735_QueueReset();
 
     return ST7735_QueuePush(&cmd);
@@ -720,5 +906,24 @@ void ST7735_Process(void)
     {
         s_active.busy = 0U;
         s_active.cmd.type = ST7735_CMD_NONE;
+    }
+}
+
+/* ---------- HAL callbacks ---------- */
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI2)
+    {
+        s_spiDmaBusy = 0U;
+    }
+}
+
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI2)
+    {
+        s_spiDmaError = 1U;
+        s_spiDmaBusy = 0U;
     }
 }

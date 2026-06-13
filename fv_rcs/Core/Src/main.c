@@ -115,13 +115,10 @@ int main(void)
   SetBackLight(63);
 
   ST7735_Clear(ST7735_BLACK);
-
-  ST7735_Clear(ST7735_BLACK);
-  ST7735_FillRect(10, 100, 60, 20, ST7735_RED);
-  ST7735_DrawText(10, 10, "Hello", ST7735_WHITE, ST7735_MAGENTA);
-  ST7735_DrawText(10, 30, "World!!", ST7735_WHITE, ST7735_GREEN);
-  ST7735_DrawText(10, 50, "HELLO", ST7735_WHITE, ST7735_YELLOW);
-  ST7735_FillCircle(100, 64, 20, ST7735_BLUE);
+  //ST7735_FillRect(152, 0, 8, 80, ST7735_GREEN);
+  //ST7735_DrawText(10, 10, "Hello", ST7735_RED, ST7735_BLACK);
+  //ST7735_DrawText(30, 20, "World!!", ST7735_YELLOW, ST7735_BLACK);
+  //ST7735_FillCircle(100, 60, 20, ST7735_WHITE);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -130,6 +127,7 @@ int main(void)
   {
     /* USER CODE END WHILE */
 	  ST7735_Process();
+	  __WFI();
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
