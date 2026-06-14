@@ -9,7 +9,6 @@ extern "C" {
 #endif
 
 void Buttons_Init(void);
-void Buttons_Tick1ms(void);
 uint8_t Buttons_Get(uint8_t ch);
 
 #ifdef __cplusplus

@@ -2,7 +2,6 @@
 #include <string.h>
 
 extern ADC_HandleTypeDef hadc;
-extern TIM_HandleTypeDef htim17;
 
 volatile uint16_t ADC_V = 0;
 volatile uint16_t ADC_X = 0;
@@ -10,7 +9,7 @@ volatile uint16_t ADC_Y = 0;
 volatile uint16_t ADC_U = 0;
 
 /* DMA буфер */
-static uint16_t s_dma[4];
+static uint16_t s_dma[ADC_INPUT_COUNT];
 
 /* История 5 значений на канал */
 static uint16_t s_hist_v[5];
@@ -18,11 +17,11 @@ static uint16_t s_hist_x[5];
 static uint16_t s_hist_y[5];
 static uint16_t s_hist_u[5];
 
-static volatile uint8_t s_adcBusy = 0;
-static uint8_t s_initialized = 0;
+static volatile uint8_t s_adcBusy = 0U;
+static uint8_t s_initialized = 0U;
+static volatile uint8_t s_changedMask = 0U;
 
 /* ---------------- helpers ---------------- */
-
 static void HistShiftAppend(uint16_t hist[5], uint16_t value)
 {
     hist[0] = hist[1];
@@ -56,43 +55,79 @@ static void InitHistoryFromFirstSample(void)
 {
     uint8_t i;
 
-    for (i = 0; i < 5; i++)
+    for (i = 0U; i < 5U; i++)
     {
-        s_hist_v[i] = s_dma[0];
-        s_hist_x[i] = s_dma[1];
-        s_hist_y[i] = s_dma[2];
-        s_hist_u[i] = s_dma[3];
+        s_hist_v[i] = s_dma[ADC_INPUT_CH_V];
+        s_hist_x[i] = s_dma[ADC_INPUT_CH_X];
+        s_hist_y[i] = s_dma[ADC_INPUT_CH_Y];
+        s_hist_u[i] = s_dma[ADC_INPUT_CH_U];
     }
 
-    ADC_V = s_dma[0];
-    ADC_X = s_dma[1];
-    ADC_Y = s_dma[2];
-    ADC_U = s_dma[3];
+    ADC_V = s_dma[ADC_INPUT_CH_V];
+    ADC_X = s_dma[ADC_INPUT_CH_X];
+    ADC_Y = s_dma[ADC_INPUT_CH_Y];
+    ADC_U = s_dma[ADC_INPUT_CH_U];
 
-    s_initialized = 1;
+    s_changedMask = (1U << ADC_INPUT_CH_V) |
+                    (1U << ADC_INPUT_CH_X) |
+                    (1U << ADC_INPUT_CH_Y) |
+                    (1U << ADC_INPUT_CH_U);
+
+    s_initialized = 1U;
 }
 
 static void UpdateFilteredValues(void)
 {
-    if (!s_initialized)
+    uint16_t newV;
+    uint16_t newX;
+    uint16_t newY;
+    uint16_t newU;
+    uint8_t changedMask = 0U;
+
+    if (s_initialized == 0U)
     {
         InitHistoryFromFirstSample();
         return;
     }
 
-    HistShiftAppend(s_hist_v, s_dma[0]);
-    HistShiftAppend(s_hist_x, s_dma[1]);
-    HistShiftAppend(s_hist_y, s_dma[2]);
-    HistShiftAppend(s_hist_u, s_dma[3]);
+    HistShiftAppend(s_hist_v, s_dma[ADC_INPUT_CH_V]);
+    HistShiftAppend(s_hist_x, s_dma[ADC_INPUT_CH_X]);
+    HistShiftAppend(s_hist_y, s_dma[ADC_INPUT_CH_Y]);
+    HistShiftAppend(s_hist_u, s_dma[ADC_INPUT_CH_U]);
 
-    ADC_V = Median5(s_hist_v);
-    ADC_X = Median5(s_hist_x);
-    ADC_Y = Median5(s_hist_y);
-    ADC_U = Median5(s_hist_u);
+    newV = Median5(s_hist_v);
+    newX = Median5(s_hist_x);
+    newY = Median5(s_hist_y);
+    newU = Median5(s_hist_u);
+
+    if (ADC_V != newV)
+    {
+        ADC_V = newV;
+        changedMask |= (1U << ADC_INPUT_CH_V);
+    }
+
+    if (ADC_X != newX)
+    {
+        ADC_X = newX;
+        changedMask |= (1U << ADC_INPUT_CH_X);
+    }
+
+    if (ADC_Y != newY)
+    {
+        ADC_Y = newY;
+        changedMask |= (1U << ADC_INPUT_CH_Y);
+    }
+
+    if (ADC_U != newU)
+    {
+        ADC_U = newU;
+        changedMask |= (1U << ADC_INPUT_CH_U);
+    }
+
+    s_changedMask |= changedMask;
 }
 
 /* ---------------- public ---------------- */
-
 void AdcInputs_Init(void)
 {
     memset((void*)s_dma, 0, sizeof(s_dma));
@@ -101,31 +136,49 @@ void AdcInputs_Init(void)
     memset((void*)s_hist_y, 0, sizeof(s_hist_y));
     memset((void*)s_hist_u, 0, sizeof(s_hist_u));
 
-    ADC_V = 0;
-    ADC_X = 0;
-    ADC_Y = 0;
-    ADC_U = 0;
+    ADC_V = 0U;
+    ADC_X = 0U;
+    ADC_Y = 0U;
+    ADC_U = 0U;
 
-    s_adcBusy = 0;
-    s_initialized = 0;
+    s_adcBusy = 0U;
+    s_initialized = 0U;
+    s_changedMask = 0U;
+}
 
-    HAL_TIM_Base_Start_IT(&htim17);
+void AdcInputs_Start(void)
+{
+    if (s_adcBusy != 0U)
+    {
+        return;
+    }
+
+    s_adcBusy = 1U;
+    HAL_ADC_Start_DMA(&hadc, (uint32_t*)s_dma, ADC_INPUT_COUNT);
+}
+
+uint8_t ADC_isChanged(uint8_t channel)
+{
+    uint8_t mask;
+    uint8_t changed;
+
+    if (channel >= ADC_INPUT_COUNT)
+    {
+        return 0U;
+    }
+
+    mask = (uint8_t)(1U << channel);
+    changed = (s_changedMask & mask) ? 1U : 0U;
+
+    if (changed != 0U)
+    {
+        s_changedMask &= (uint8_t)(~mask);
+    }
+
+    return changed;
 }
 
 /* ---------------- HAL callbacks ---------------- */
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM17)
-    {
-        if (s_adcBusy == 0U)
-        {
-            s_adcBusy = 1U;
-            HAL_ADC_Start_DMA(&hadc, (uint32_t*)s_dma, 4);
-        }
-    }
-}
-
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadcHandle)
 {
     if (hadcHandle->Instance == ADC1)
