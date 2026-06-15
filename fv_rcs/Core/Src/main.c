@@ -95,7 +95,6 @@ int main(void)
   MX_ADC_Init();
   MX_TIM14_Init();
   MX_SPI2_Init();
-  MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
   App_Init();
   /* USER CODE END 2 */

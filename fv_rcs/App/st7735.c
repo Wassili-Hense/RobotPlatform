@@ -236,6 +236,43 @@ static uint8_t ST7735_StartDma(uint8_t* data, uint16_t size)
     s_spiDmaBusy = 1U;
     return 1U;
 }
+/*
+ * Пытается восстановить локальный флаг s_spiDmaBusy, если DMA-передача по SPI2
+ * уже фактически завершилась, но HAL_SPI_TxCpltCallback() по какой-то причине
+ * не сбросил его.
+ *
+ * Что делает:
+ * - если s_spiDmaBusy == 0, сразу возвращает 1;
+ * - если у SPI2 нет DMA TX handle, восстановление невозможно -> 0;
+ * - если DMA ещё не в состоянии READY, передача не завершена -> 0;
+ * - если SPI всё ещё держит флаг BSY, последние биты ещё передаются -> 0;
+ * - если DMA уже READY и SPI не busy, принудительно сбрасывает s_spiDmaBusy
+ *   и возвращает 1.
+ *
+ * Какую проблему решает:
+ * В текущем драйвере ST7735_NeedsProcess() возвращает 0, пока s_spiDmaBusy != 0,
+ * а ST7735_Process() не продвигает очередь/активную команду. Если completion-
+ * callback не дошёл, экран может "зависнуть" на последнем кадре, хотя DMA и SPI
+ * уже реально освободились. Эта функция устраняет такое ложное busy-состояние.
+ */
+
+static uint8_t ST7735_TryRecoverDmaBusy(void)
+{
+    if (s_spiDmaBusy == 0U)
+        return 1U;
+
+    if (hspi2.hdmatx == NULL)
+        return 0U;
+
+    if (HAL_DMA_GetState(hspi2.hdmatx) != HAL_DMA_STATE_READY)
+        return 0U;
+
+    if (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY) != RESET)
+        return 0U;
+
+    s_spiDmaBusy = 0U;
+    return 1U;
+}
 
 static void ST7735_FillColorBuffer(uint16_t color)
 {
@@ -865,15 +902,191 @@ uint8_t ST7735_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, 
 
     return ST7735_QueuePush(&cmd);
 }
+/* ------------- Progress bar ------------- */
+/* Размеры полосы */
+#define ProgressBar_PB_LEN   70U
+#define ProgressBar_PB_TH   5U
 
+#define ProgressBar_RED_LIMIT   3U
+#define ProgressBar_GREEN_LIMIT 67U
+#define ProgressBar_RANGE       (ProgressBar_GREEN_LIMIT - ProgressBar_RED_LIMIT) /* 64 */
+
+const ProgressBar_Spec ST7735_ProgressBarLeftVertical  = { .x0 = 0U,   .y0 = ST7735_HEIGHT - 1, .dir = ProgressBar_DIR_UP };
+const ProgressBar_Spec ST7735_ProgressBarTopLeft       = { .x0 = ST7735_WIDTH / 2 - 1,  .y0 = 0U,  .dir = ProgressBar_DIR_LEFT };
+const ProgressBar_Spec ST7735_ProgressBarTopRight      = { .x0 = ST7735_WIDTH / 2,  .y0 = 0U,  .dir = ProgressBar_DIR_RIGHT };
+const ProgressBar_Spec ST7735_ProgressBarRightVertical = { .x0 = ST7735_WIDTH - 1 - ProgressBar_PB_TH, .y0 = ST7735_HEIGHT - 1, .dir = ProgressBar_DIR_UP };
+
+/* Цвет для заданного количества цветных пикселей (целочисленно, без float) */
+static inline uint16_t ProgressBar_color_for_len(uint8_t v)
+{
+    if (v <= ProgressBar_RED_LIMIT) return ST7735_RED;
+    if (v >= ProgressBar_GREEN_LIMIT) return ST7735_GREEN;
+
+    uint32_t t = (uint32_t)(v - ProgressBar_RED_LIMIT); /* 1..63 */
+    uint32_t g6 = t;                                    /* g6 = t */
+    uint32_t r5 = (ProgressBar_RANGE - t) >> 1;         /* r5 = (Range - t) >> 1 */
+    return (uint16_t)((r5 << 11) | (g6 << 5));  // R5 G6 B5
+}
+
+/* Ограничение длины */
+static inline uint8_t ProgressBar_clamp(uint8_t v, uint8_t max_len)
+{
+    return (v > max_len) ? max_len : v;
+}
+
+/*
+ * Рисует progress bar по минимальной спецификации.
+ * Интерпретация якоря (x0,y0):
+ *  - DIR_RIGHT: x0,y0 = left-top  (растёт вправо)
+ *  - DIR_LEFT : x0,y0 = right-top (растёт влево)
+ *  - DIR_UP   : x0,y0 = bottom-left (растёт вверх)
+ *  - DIR_DOWN : x0,y0 = top-left  (растёт вниз)
+ *
+ * value_pixels — количество цветных пикселей (0..70).
+ * Функция рисует только цветную часть и только незаполненную часть (тёмно-серый)
+ * внутри bounding rect; ничего за пределами bounding rect не затирается.
+ */
+void ProgressBar_DrawSpec(const ProgressBar_Spec *spec, uint8_t value_pixels)
+{
+    if (spec == NULL) return;
+
+    uint8_t v;
+    uint16_t fg;
+    uint16_t bg = ST7735_GRAY;
+
+    switch (spec->dir) {
+    case ProgressBar_DIR_RIGHT: {
+        /* bounding rect: left-top = (x0,y0), width = 70, height = 8 */
+        uint8_t bx = spec->x0;
+        uint8_t by = spec->y0;
+        uint8_t bw = ProgressBar_PB_LEN;
+        uint8_t bh = ProgressBar_PB_TH;
+
+        v = ProgressBar_clamp(value_pixels, bw);
+        fg = ProgressBar_color_for_len(v);
+
+        /* цветная часть слева */
+        if (v) ST7735_FillRect(bx, by, v, bh, fg);
+        /* фон справа внутри bounding rect */
+        if (v < bw) ST7735_FillRect((uint8_t)(bx + v), by, (uint8_t)(bw - v), bh, bg);
+        break;
+    }
+
+    case ProgressBar_DIR_LEFT: {
+        /* bounding rect: right-top = (x0,y0), width = 70, height = 8 */
+        uint8_t bx_right = spec->x0;
+        uint8_t by = spec->y0;
+        uint8_t bw = ProgressBar_PB_LEN;
+        uint8_t bh = ProgressBar_PB_TH;
+        uint8_t bx_left = (uint8_t)(bx_right - (bw - 1U)); /* leftmost x */
+
+        v = ProgressBar_clamp(value_pixels, bw);
+        fg = ProgressBar_color_for_len(v);
+
+        /* цветная часть справа->влево: x_start..x_end */
+        if (v) {
+            uint8_t x_start = (uint8_t)(bx_right - v + 1U);
+            ST7735_FillRect(x_start, by, v, bh, fg);
+            /* фон слева от цветной внутри bounding rect */
+            if (x_start > bx_left) {
+                ST7735_FillRect(bx_left, by, (uint8_t)(x_start - bx_left), bh, bg);
+            }
+        } else {
+            /* v == 0: весь bounding rect — фон */
+            ST7735_FillRect(bx_left, by, bw, bh, bg);
+        }
+        break;
+    }
+
+    case ProgressBar_DIR_UP: {
+        /* bounding rect: bottom-left = (x0,y0), width = 8, height = 70 */
+        uint8_t bx = spec->x0;
+        uint8_t by_bottom = spec->y0;
+        uint8_t bw = ProgressBar_PB_TH;
+        uint8_t bh = ProgressBar_PB_LEN;
+        uint8_t by_top = (uint8_t)(by_bottom - (bh - 1U)); /* top y */
+
+        v = ProgressBar_clamp(value_pixels, bh);
+        fg = ProgressBar_color_for_len(v);
+
+        /* цветная часть снизу->вверх */
+        if (v) {
+            int16_t y_start_i = (int16_t)by_bottom - (int16_t)v + 1;
+            uint8_t y_start = (y_start_i < (int16_t)by_top) ? by_top : (uint8_t)y_start_i;
+            uint8_t h_col = (uint8_t)(by_bottom - y_start + 1U);
+            ST7735_FillRect(bx, y_start, bw, h_col, fg);
+            /* фон сверху от цветной внутри bounding rect */
+            if (y_start > by_top) {
+                ST7735_FillRect(bx, by_top, bw, (uint8_t)(y_start - by_top), bg);
+            }
+        } else {
+            /* v == 0: весь bounding rect — фон */
+            ST7735_FillRect(bx, by_top, bw, bh, bg);
+        }
+        break;
+    }
+
+    case ProgressBar_DIR_DOWN: {
+        /* bounding rect: top-left = (x0,y0), width = 8, height = 70 */
+        uint8_t bx = spec->x0;
+        uint8_t by = spec->y0;
+        uint8_t bw = ProgressBar_PB_TH;
+        uint8_t bh = ProgressBar_PB_LEN;
+
+        v = ProgressBar_clamp(value_pixels, bh);
+        fg = ProgressBar_color_for_len(v);
+
+        /* цветная часть сверху->вниз */
+        if (v) ST7735_FillRect(bx, by, bw, v, fg);
+        /* фон снизу внутри bounding rect */
+        if (v < bh) ST7735_FillRect(bx, (uint8_t)(by + v), bw, (uint8_t)(bh - v), bg);
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+
+/* ------------- Public API ------------- */
 uint8_t ST7735_GetQueueFill(void)
 {
     return s_queueCount;
 }
 
+uint8_t ST7735_NeedsProcess(void)
+{
+    if (s_spiDmaBusy != 0U)
+    {
+        if (ST7735_TryRecoverDmaBusy() == 0U)
+            return 0U;
+    }
+
+    return ((s_active.busy != 0U) || (s_queueCount != 0U)) ? 1U : 0U;
+}
+
+uint8_t ST7735_IsBusy(void)
+{
+    if (s_spiDmaBusy != 0U)
+    {
+        (void)ST7735_TryRecoverDmaBusy();
+    }
+
+    return ((s_active.busy != 0U) ||
+            (s_queueCount != 0U) ||
+            (s_spiDmaBusy != 0U)) ? 1U : 0U;
+}
+
 void ST7735_Process(void)
 {
     uint8_t done = 0U;
+
+    if (s_spiDmaBusy != 0U)
+    {
+        if (ST7735_TryRecoverDmaBusy() == 0U)
+            return;
+    }
 
     if (!ST7735_StartNextCommand())
         return;

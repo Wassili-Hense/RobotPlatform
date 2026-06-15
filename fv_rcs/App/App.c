@@ -12,12 +12,11 @@
 #include "st7735.h"
 
 #define APP_POWER_OFF_COUNT          1000U
-#define APP_SLOT_COUNT               16U
-#define APP_ADC_START_PERIOD_MS      100U
+#define APP_ADC_START_PERIOD_MS       100U
 #define APP_ADC_FORCE_SEND_MS        2500U
-#define APP_ADC_MIN_SEND_PERIOD_MS   100U
-#define APP_ADC_DELTA                15U
-#define APP_I2C_ITEM_COUNT           14U
+#define APP_ADC_MIN_SEND_PERIOD_MS    100U
+#define APP_ADC_DELTA                 15U
+#define APP_I2C_ITEM_COUNT            14U
 
 typedef enum
 {
@@ -83,8 +82,7 @@ static volatile uint32_t s_i2cTick[APP_I2C_ITEM_COUNT];
 static uint16_t s_backlightCounter = 5000U;
 static volatile uint8_t s_toneBusy = 0U;
 static volatile uint32_t s_toneStopTick = 0U;
-static volatile uint8_t s_pendingSlots = 0U;
-static uint8_t s_currentSlot = 0U;
+static uint32_t s_lastAppTick = 0U;
 static uint32_t s_adcStartTick = 0U;
 
 /* -------------------------------------------------------------------------- */
@@ -99,48 +97,38 @@ static void App_PrepareDigitalForI2c(uint8_t index, uint16_t value)
     }
 
     s_i2cActualValue[index] = value;
-
     if (s_i2cSentValue[index] != value)
     {
         s_i2cDirty[index] = 1U;
     }
 }
 
-static uint8_t App_IsAnalogTransferDue(uint8_t index, uint8_t adcChannel, uint16_t value)
-{
-    uint16_t prev;
-    uint16_t diff;
-    uint32_t dt;
-
-    if (index >= APP_I2C_ITEM_COUNT)
-    {
-        return 0U;
-    }
-
-    prev = s_i2cSentValue[index];
-    diff = (value >= prev) ? (value - prev) : (prev - value);
-    dt = HAL_GetTick() - s_i2cTick[index];
-
-    if (((ADC_isChanged(adcChannel) != 0U) &&
-         (dt >= APP_ADC_MIN_SEND_PERIOD_MS) &&
-         (diff >= APP_ADC_DELTA)) ||
-        (dt >= APP_ADC_FORCE_SEND_MS))
-    {
-        return 1U;
-    }
-
-    return 0U;
-}
-
-static void App_PrepareAnalogForI2c(uint8_t index, uint16_t value)
+static void App_ProcessAnalogForI2c(uint8_t adcChannel, uint16_t value, uint8_t index)
 {
     if (index >= APP_I2C_ITEM_COUNT)
     {
         return;
     }
 
-    s_i2cActualValue[index] = value;
-    s_i2cDirty[index] = 1U;
+    if (ADC_isChanged(adcChannel) != 0U)
+    {
+        s_i2cActualValue[index] = value;
+    }
+
+    if (s_i2cDirty[index] == 0U)
+    {
+        uint16_t prev = s_i2cSentValue[index];
+        uint16_t diff = (s_i2cActualValue[index] >= prev)
+                      ? (uint16_t)(s_i2cActualValue[index] - prev)
+                      : (uint16_t)(prev - s_i2cActualValue[index]);
+        uint32_t dt = HAL_GetTick() - s_i2cTick[index];
+
+        if (((dt > APP_ADC_MIN_SEND_PERIOD_MS) && (diff > APP_ADC_DELTA)) ||
+            (dt > APP_ADC_FORCE_SEND_MS))
+        {
+            s_i2cDirty[index] = 1U;
+        }
+    }
 }
 
 static uint8_t App_I2cRequestCallback(uint8_t *outData)
@@ -178,7 +166,6 @@ static uint8_t App_I2cRequestCallback(uint8_t *outData)
         s_i2cDirty[i] = 0U;
         s_i2cSentValue[i] = value;
         s_i2cTick[i] = HAL_GetTick();
-
         return 2U;
     }
 
@@ -224,7 +211,7 @@ static void App_ProcessBacklight(void)
 {
     if (s_backlightCounter > 0U)
     {
-        App_SetBacklightLevel(s_backlightCounter < 1024U ? (s_backlightCounter >> 3) : 127U);
+        App_SetBacklightLevel((s_backlightCounter < 1024U) ? (s_backlightCounter >> 3) : 127U);
         s_backlightCounter--;
     }
 }
@@ -308,7 +295,6 @@ static void App_ProcessPower(void)
     else if (s_i2cActualValue[APP_I2C_INDEX_BUTTON_0] != 0U)
     {
         offCounter++;
-
         if (offCounter > APP_POWER_OFF_COUNT)
         {
             if (offCounter == (APP_POWER_OFF_COUNT + 2U))
@@ -345,24 +331,25 @@ static void App_ProcessPower(void)
 
 static void App_ProcessAdc(void)
 {
-    if ((HAL_GetTick() - s_adcStartTick) >= APP_ADC_START_PERIOD_MS)
+    uint32_t tick = HAL_GetTick();
+
+    if ((tick - s_adcStartTick) >= APP_ADC_START_PERIOD_MS)
     {
-        s_adcStartTick = HAL_GetTick();
+        s_adcStartTick = tick;
         AdcInputs_Start();
     }
-    else if (App_IsAnalogTransferDue(APP_I2C_INDEX_ADC_X, ADC_INPUT_CH_X, ADC_X) != 0U)
+    else
     {
-        App_PrepareAnalogForI2c(APP_I2C_INDEX_ADC_X, ADC_X);
-    }
-    else if (App_IsAnalogTransferDue(APP_I2C_INDEX_ADC_Y, ADC_INPUT_CH_Y, ADC_Y) != 0U)
-    {
-        App_PrepareAnalogForI2c(APP_I2C_INDEX_ADC_Y, ADC_Y);
-    }
-    else if (ADC_isChanged(ADC_INPUT_CH_U) != 0U)
-    {
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_USB_CONN, (ADC_U > 1000U) ? 1U : 0U);
+        App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
+        App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
+
+        if (ADC_isChanged(ADC_INPUT_CH_U) != 0U)
+        {
+            App_PrepareDigitalForI2c(APP_I2C_INDEX_USB_CONN, (ADC_U > 1000U) ? 1U : 0U);
+        }
     }
 }
+
 
 /* -------------------------------------------------------------------------- */
 /* App lifecycle                                                              */
@@ -370,28 +357,30 @@ static void App_ProcessAdc(void)
 
 void App_Init(void)
 {
-    AdcInputs_Init();
-    Buttons_Init();
-    ST7735_Init();
+    s_lastAppTick = HAL_GetTick();
+    s_adcStartTick = s_lastAppTick - APP_ADC_START_PERIOD_MS;
     App_ResetI2cState();
 
-    s_pendingSlots = 0U;
-    s_currentSlot = 0U;
-    s_adcStartTick = HAL_GetTick() - APP_ADC_START_PERIOD_MS;
-
+    AdcInputs_Init();
+    Buttons_Init();
     I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
-    HAL_TIM_Base_Start_IT(&htim17);
-    AdcInputs_Start();
+    ST7735_Init();
 
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
+    AdcInputs_Start();
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);  /* Power ON latch */
     App_SetBacklightLevel(63U);
+
     Tone(757U, 45U);
     HAL_Delay(65U);
-    ST7735_Clear(ST7735_BLACK);
 
+    ST7735_Clear(ST7735_BLACK);
     while (Buttons_Get(0U) != 0U)
     {
-        ST7735_Process();
+        App_ProcessTone();
+        if (ST7735_NeedsProcess() != 0U)
+        {
+            ST7735_Process();
+        }
         __WFI();
     }
 
@@ -402,104 +391,40 @@ void App_Init(void)
 
 void App_Run(void)
 {
-    if (s_pendingSlots != 0U)
+    uint32_t now = HAL_GetTick();
+
+    if (now != s_lastAppTick)
     {
-        s_pendingSlots--;
+        s_lastAppTick = now;
+        uint8_t st_busy = (ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 2U)) ? 1U : 0U;
+        /* 1 ms tasks */
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_ST7735_OVERFLOW, st_busy);
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_0, Buttons_Get(0U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_1, Buttons_Get(1U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_2, Buttons_Get(2U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_3, Buttons_Get(3U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_4, Buttons_Get(4U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_5, Buttons_Get(5U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_6, Buttons_Get(6U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_7, Buttons_Get(7U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_8, Buttons_Get(8U));
+        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_9, Buttons_Get(9U));
+        App_ProcessPower();
+        App_ProcessTone();
+        App_ProcessBacklight();
+        App_ProcessAdc();
 
-        switch (s_currentSlot)
-        {
-            case 0:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_ST7735_OVERFLOW,
-                                         (ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 2U)) ? 1U : 0U);
-                break;
-
-            case 1:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_0, Buttons_Get(0U));
-                break;
-
-            case 2:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_1, Buttons_Get(1U));
-                break;
-
-            case 3:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_2, Buttons_Get(2U));
-                break;
-
-            case 4:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_3, Buttons_Get(3U));
-                break;
-
-            case 5:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_4, Buttons_Get(4U));
-                break;
-
-            case 6:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_5, Buttons_Get(5U));
-                break;
-
-            case 7:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_6, Buttons_Get(6U));
-                break;
-
-            case 8:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_7, Buttons_Get(7U));
-                break;
-
-            case 9:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_8, Buttons_Get(8U));
-                break;
-
-            case 10:
-                App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_9, Buttons_Get(9U));
-                break;
-
-            case 11:
-                App_ProcessPower();
-                break;
-
-            case 12:
-                App_ProcessTone();
-                break;
-
-            case 13:
-                App_ProcessBacklight();
-                break;
-
-            case 14:
-                App_ProcessAdc();
-                break;
-
-            case 15:
-            default:
-                break;
-        }
-
-        s_currentSlot++;
-        if (s_currentSlot >= APP_SLOT_COUNT)
-        {
-            s_currentSlot = 0U;
+        if(st_busy){  // for test
+            Tone(636U, 60U);
         }
     }
 
-    ST7735_Process();
-
-    if (s_pendingSlots == 0U)
+    if (ST7735_NeedsProcess() != 0U)
+    {
+        ST7735_Process();
+    }
+    else
     {
         __WFI();
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Timer callback                                                             */
-/* -------------------------------------------------------------------------- */
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM17)
-    {
-        if (s_pendingSlots < 255U)
-        {
-            s_pendingSlots++;
-        }
     }
 }
