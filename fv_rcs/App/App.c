@@ -17,6 +17,7 @@
 #define APP_ADC_MIN_SEND_PERIOD_MS    100U
 #define APP_ADC_DELTA                 15U
 #define APP_I2C_ITEM_COUNT            14U
+#define APP_ABS_DIFF_U16(a, b) (((a) >= (b)) ? ((a) - (b)) : ((b) - (a)))
 
 typedef enum
 {
@@ -309,7 +310,6 @@ static void App_ProcessPower(void)
         }
         else
         {
-            s_backlightCounter = 15000U;
         }
     }
     else if (offCounter > 0U)
@@ -324,7 +324,84 @@ static void App_ProcessPower(void)
         }
     }
 }
+/* -------------------------------------------------------------------------- */
+/* Progress bar / battery SOC                                                 */
+/* -------------------------------------------------------------------------- */
 
+/* Таблица OCV в значениях ADC */
+static const uint16_t ocv_adc[] = {
+     911,  982, 1031, 1049, 1074, 1084, 1095, 1104, 1122, 1130, 1138, 1158, 1178
+};
+static const uint8_t ocv_soc[] = {
+      0U,   4U,  14U,  21U,  31U,  35U,  39U,  42U,  49U,  53U,  56U,  63U,  70U
+};
+
+#define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
+
+static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2)
+{
+    uint16_t dx = x2 - x1;
+    uint16_t num = x - x1;
+    uint16_t t = (uint16_t)((num << 8) / dx);
+    return (uint8_t)(y1 + ((((uint16_t)(y2 - y1)) * t) >> 8));
+}
+
+/*
+ * Быстрый бинарный поиск по таблице OCV
+ */
+static uint8_t adc_to_soc(uint16_t adc)
+{
+    int low;
+    int high;
+
+    if (adc <= ocv_adc[0]) return ocv_soc[0];
+    if (adc >= ocv_adc[OCV_POINTS - 1U]) return ocv_soc[OCV_POINTS - 1U];
+
+    low = 0;
+    high = (int)OCV_POINTS - 1;
+
+    while ((high - low) > 1)
+    {
+        int mid = (low + high) >> 1;
+        if (adc < ocv_adc[mid])
+        {
+            high = mid;
+        }
+        else
+        {
+            low = mid;
+        }
+    }
+
+    return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
+}
+
+static uint8_t App_DrawProgressBar(uint8_t index, uint8_t value)
+{
+    const ProgressBar_Spec *spec;
+
+    if (index >= 4U)
+    {
+        return 1U;
+    }
+
+    if ((ST7735_QUEUE_SIZE - ST7735_GetQueueFill()) < 4U)
+    {
+        return 1U;
+    }
+
+    switch (index)
+    {
+        case 0U: spec = &ST7735_ProgressBarLeftVertical;  break;
+        case 1U: spec = &ST7735_ProgressBarTopLeft;       break;
+        case 2U: spec = &ST7735_ProgressBarTopRight;      break;
+        case 3U: spec = &ST7735_ProgressBarRightVertical; break;
+        default: return 1U;
+    }
+
+    ProgressBar_DrawSpec(spec, value);
+    return 0U;
+}
 /* -------------------------------------------------------------------------- */
 /* ADC service                                                                */
 /* -------------------------------------------------------------------------- */
@@ -340,17 +417,32 @@ static void App_ProcessAdc(void)
     }
     else
     {
+        if (ADC_isChanged(ADC_INPUT_CH_V) != 0U)
+        {
+            (void)App_DrawProgressBar(3U, adc_to_soc(ADC_V));
+        }
+
+        uint16_t dx = APP_ABS_DIFF_U16(ADC_X, s_i2cActualValue[APP_I2C_INDEX_ADC_X]);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
+        if (dx > 35U)
+        {
+            (void)App_DrawProgressBar(2U, (uint8_t)(ADC_X / 64U));
+        }
+
+        uint16_t dy = APP_ABS_DIFF_U16(ADC_Y, s_i2cActualValue[APP_I2C_INDEX_ADC_Y]);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
+        if (dy > 35U)
+        {
+            (void)App_DrawProgressBar(0U, (uint8_t)(ADC_Y / 64U));
+        }
 
         if (ADC_isChanged(ADC_INPUT_CH_U) != 0U)
         {
             App_PrepareDigitalForI2c(APP_I2C_INDEX_USB_CONN, (ADC_U > 1000U) ? 1U : 0U);
         }
+
     }
 }
-
-
 /* -------------------------------------------------------------------------- */
 /* App lifecycle                                                              */
 /* -------------------------------------------------------------------------- */
@@ -395,36 +487,44 @@ void App_Run(void)
 
     if (now != s_lastAppTick)
     {
+        uint8_t anyButtonPressed = 0U;
+        uint8_t i;
+
         s_lastAppTick = now;
-        uint8_t st_busy = (ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 2U)) ? 1U : 0U;
+
         /* 1 ms tasks */
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_ST7735_OVERFLOW, st_busy);
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_0, Buttons_Get(0U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_1, Buttons_Get(1U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_2, Buttons_Get(2U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_3, Buttons_Get(3U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_4, Buttons_Get(4U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_5, Buttons_Get(5U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_6, Buttons_Get(6U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_7, Buttons_Get(7U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_8, Buttons_Get(8U));
-        App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTON_9, Buttons_Get(9U));
+        App_PrepareDigitalForI2c(
+            APP_I2C_INDEX_ST7735_OVERFLOW,
+            (ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 2U)) ? 1U : 0U);
+
+        for (i = 0U; i < 10U; i++)
+        {
+            uint8_t button = Buttons_Get(i);
+            App_PrepareDigitalForI2c((uint8_t)(APP_I2C_INDEX_BUTTON_0 + i), button);
+            if (button != 0U)
+            {
+                anyButtonPressed = 1U;
+            }
+        }
+
+        if (anyButtonPressed != 0U)
+        {
+            s_backlightCounter = 15000U;
+        }
+
         App_ProcessPower();
         App_ProcessTone();
         App_ProcessBacklight();
         App_ProcessAdc();
-
-        if(st_busy){  // for test
-            Tone(636U, 60U);
-        }
     }
 
     if (ST7735_NeedsProcess() != 0U)
     {
         ST7735_Process();
     }
-    else
+    else if (HAL_GetTick() == s_lastAppTick)
     {
         __WFI();
     }
 }
+
