@@ -47,7 +47,6 @@ static volatile uint32_t s_i2cTick[APP_I2C_ITEM_COUNT];
 /* -------------------------------------------------------------------------- */
 /* App state                                                                  */
 /* -------------------------------------------------------------------------- */
-static uint16_t s_backlightCounter = 5000U;
 static volatile uint8_t s_toneBusy = 0U;
 static volatile uint32_t s_toneStopTick = 0U;
 static uint32_t s_lastAppTick = 0U;
@@ -143,28 +142,6 @@ static void App_ResetI2cState(void)
         s_i2cActualValue[i] = 0U;
         s_i2cSentValue[i] = 0U;
         s_i2cTick[i] = 0U;
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Backlight                                                                  */
-/* -------------------------------------------------------------------------- */
-static void App_SetBacklightLevel(uint16_t pulse)
-{
-    if (htim14.State == HAL_TIM_STATE_RESET)
-    {
-        return;
-    }
-
-    __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, pulse);
-}
-
-static void App_ProcessBacklight(void)
-{
-    if (s_backlightCounter > 0U)
-    {
-        App_SetBacklightLevel((s_backlightCounter < 1024U) ? (s_backlightCounter >> 3) : 127U);
-        s_backlightCounter--;
     }
 }
 
@@ -318,33 +295,6 @@ static uint8_t adc_to_soc(uint16_t adc)
     return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
 }
 
-static uint8_t App_DrawProgressBar(uint8_t index, uint8_t value)
-{
-    const ProgressBar_Spec *spec;
-
-    if (index >= 4U)
-    {
-        return 1U;
-    }
-
-    if ((ST7735_QUEUE_SIZE - ST7735_GetQueueFill()) < 4U)
-    {
-        return 1U;
-    }
-
-    switch (index)
-    {
-        case 0U: spec = &ST7735_ProgressBarLeftVertical;  break;
-        case 1U: spec = &ST7735_ProgressBarTopLeft;       break;
-        case 2U: spec = &ST7735_ProgressBarTopRight;      break;
-        case 3U: spec = &ST7735_ProgressBarRightVertical; break;
-        default: return 1U;
-    }
-
-    ProgressBar_DrawSpec(spec, value);
-    return 0U;
-}
-
 /* -------------------------------------------------------------------------- */
 /* ADC service                                                                */
 /* -------------------------------------------------------------------------- */
@@ -361,8 +311,7 @@ static void App_ProcessAdc(void)
     {
         if (ADC_isChanged(ADC_INPUT_CH_V) != 0U)
         {
-            (void)App_DrawProgressBar(3U, adc_to_soc(ADC_V));
-        }
+        	(void)ST7735_DrawProgressBar(3U, adc_to_soc(ADC_V));        }
 
         App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
@@ -393,11 +342,10 @@ void App_Init(void)
     AdcInputs_Start();
 
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);  /* Power ON latch */
-    App_SetBacklightLevel(63U);
+    ST7735_SetBacklightTimeout(5000U);
 
     Tone(757U, 45U);
     HAL_Delay(65U);
-    ST7735_Clear(ST7735_BLACK);
 
     while (Buttons_Get(0U) != 0U)
     {
@@ -437,12 +385,11 @@ void App_Run(void)
 
         if (anyButtonPressed != 0U)
         {
-            s_backlightCounter = 15000U;
+        	ST7735_SetBacklightTimeout(15000U);
         }
 
         App_ProcessPower();
         App_ProcessTone();
-        App_ProcessBacklight();
         App_ProcessAdc();
     }
 
