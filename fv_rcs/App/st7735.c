@@ -3,31 +3,28 @@
 #include "gpio.h"
 #include "tim.h"
 #include "st7735_font_7x10.h"
+
 #include <string.h>
 
 #define ST7735_FONT_GLYPH_INDEX(ch) \
     ((((uint8_t)(ch)) - ST7735_FONT_7X10_FIRST_CHAR) * ST7735_FONT_7X10_GLYPH_ROWS)
 
-#define ST7735_TEXT_CELL_WIDTH (ST7735_FONT_7X10_WIDTH + ST7735_FONT_7X10_SPACING)
-
+#define ST7735_TEXT_CELL_WIDTH   (ST7735_FONT_7X10_WIDTH + ST7735_FONT_7X10_SPACING)
 #define ST7735_MAX_TEXT_LEN      21U
 #define ST7735_TEXT_STORAGE_LEN  (ST7735_MAX_TEXT_LEN + 1U)
 
-/*
- * Смещение видимой области дисплея.
- * Для текущего модуля логические координаты 160x80 отображаются корректно
- * при смещении по Y на 24.
- */
 #define ST7735_X_OFFSET 0U
 #define ST7735_Y_OFFSET 24U
 
-/*
- * Один общий буфер:
- * - для заливки одним цветом
- * - для рендера одного символа 7x10 + spacing
- */
-#define ST7735_IO_BUFFER_SIZE (ST7735_TEXT_CELL_WIDTH * ST7735_FONT_7X10_HEIGHT * 2U)
-#define ST7735_COLOR_CHUNK_PIXELS (ST7735_IO_BUFFER_SIZE / 2U)
+#define ST7735_IO_BUFFER_SIZE      (ST7735_TEXT_CELL_WIDTH * ST7735_FONT_7X10_HEIGHT * 2U)
+#define ST7735_COLOR_CHUNK_PIXELS  (ST7735_IO_BUFFER_SIZE / 2U)
+
+#define ProgressBar_PB_LEN   70U
+#define ProgressBar_PB_TH     5U
+
+#define ProgressBar_RED_LIMIT    3U
+#define ProgressBar_GREEN_LIMIT 67U
+#define ProgressBar_RANGE       (ProgressBar_GREEN_LIMIT - ProgressBar_RED_LIMIT)
 
 typedef enum
 {
@@ -43,6 +40,20 @@ typedef enum
     ST7735_TX_COLOR_REPEAT,
     ST7735_TX_CHAR
 } ST7735_TxType;
+
+typedef enum
+{
+    ProgressBar_DIR_RIGHT = 0,
+    ProgressBar_DIR_LEFT,
+    ProgressBar_DIR_UP
+} ProgressBar_Dir;
+
+typedef struct
+{
+    uint8_t x0;
+    uint8_t y0;
+    ProgressBar_Dir dir;
+} ProgressBar_Spec;
 
 typedef struct
 {
@@ -115,28 +126,12 @@ typedef struct
         } text;
     } state;
 } ST7735_ActiveJob;
-
 typedef struct
 {
     uint8_t type;
     uint16_t remainingPixels;
     uint16_t charBytes;
 } ST7735_TxState;
-
-typedef enum
-{
-    ProgressBar_DIR_RIGHT = 0,
-    ProgressBar_DIR_LEFT,
-    ProgressBar_DIR_UP
-} ProgressBar_Dir;
-
-typedef struct
-{
-    uint8_t x0;
-    uint8_t y0;
-    ProgressBar_Dir dir;
-} ProgressBar_Spec;
-
 /* ---------- Runtime state ---------- */
 
 static ST7735_Command s_queue[ST7735_QUEUE_SIZE];
@@ -151,28 +146,22 @@ static uint8_t s_ioBuffer[ST7735_IO_BUFFER_SIZE];
 static volatile uint8_t s_spiDmaBusy = 0U;
 static volatile uint8_t s_spiDmaError = 0U;
 
+/* backlight */
 static uint8_t s_backlightLevel = 64U;
 static uint8_t s_backlightApplied = 0xFFU;
 static uint32_t s_backlightOffTick = 0U;
 
-static uint8_t s_progressBarInitMask = 0U;
-static uint8_t s_progressBarPrev[4] = { 0U, 0U, 0U, 0U };
-
-#define ProgressBar_PB_LEN   70U
-#define ProgressBar_PB_TH     5U
-
-#define ProgressBar_RED_LIMIT    3U
-#define ProgressBar_GREEN_LIMIT 67U
-#define ProgressBar_RANGE       (ProgressBar_GREEN_LIMIT - ProgressBar_RED_LIMIT) /* 64 */
-
+/* progress bars */
 static const ProgressBar_Spec s_progressBars[4] =
 {
-    { .x0 = 0U,                                .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    }, /* 0 */
-    { .x0 = (uint8_t)(ST7735_WIDTH / 2U - 1U), .y0 = 0U,                 .dir = ProgressBar_DIR_LEFT  }, /* 1 */
-    { .x0 = (uint8_t)(ST7735_WIDTH / 2U),      .y0 = 0U,                 .dir = ProgressBar_DIR_RIGHT }, /* 2 */
-    { .x0 = (uint8_t)(ST7735_WIDTH - 1U - ProgressBar_PB_TH), .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP } /* 3 */
+    { .x0 = 0U,                                                .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    },
+    { .x0 = (uint8_t)(ST7735_WIDTH / 2U - 1U),                 .y0 = 0U,                 .dir = ProgressBar_DIR_LEFT  },
+    { .x0 = (uint8_t)(ST7735_WIDTH / 2U),                      .y0 = 0U,                 .dir = ProgressBar_DIR_RIGHT },
+    { .x0 = (uint8_t)(ST7735_WIDTH - 1U - ProgressBar_PB_TH),  .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    }
 };
 
+static uint8_t s_progressBarInitMask = 0U;
+static uint8_t s_progressBarPrev[4] = { 0U, 0U, 0U, 0U };
 
 /* ---------- Low-level helpers ---------- */
 
@@ -199,18 +188,18 @@ static void ST7735_DC_Data(void)
 static void ST7735_Reset(void)
 {
     HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_SET);
-    HAL_Delay(5);
+    HAL_Delay(5U);
     HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_RESET);
-    HAL_Delay(20);
+    HAL_Delay(20U);
     HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_SET);
-    HAL_Delay(120);
+    HAL_Delay(120U);
 }
 
 static void ST7735_WriteCommand(uint8_t cmd)
 {
     ST7735_Select();
     ST7735_DC_Command();
-    HAL_SPI_Transmit(&hspi2, &cmd, 1U, HAL_MAX_DELAY);
+    (void)HAL_SPI_Transmit(&hspi2, &cmd, 1U, HAL_MAX_DELAY);
     ST7735_Unselect();
 }
 
@@ -218,7 +207,7 @@ static void ST7735_WriteData(const uint8_t* data, uint16_t size)
 {
     ST7735_Select();
     ST7735_DC_Data();
-    HAL_SPI_Transmit(&hspi2, (uint8_t*)data, size, HAL_MAX_DELAY);
+    (void)HAL_SPI_Transmit(&hspi2, (uint8_t*)data, size, HAL_MAX_DELAY);
     ST7735_Unselect();
 }
 
@@ -226,12 +215,12 @@ static void ST7735_WriteCommandWithData(uint8_t cmd, const uint8_t* data, uint16
 {
     ST7735_Select();
     ST7735_DC_Command();
-    HAL_SPI_Transmit(&hspi2, &cmd, 1U, HAL_MAX_DELAY);
+    (void)HAL_SPI_Transmit(&hspi2, &cmd, 1U, HAL_MAX_DELAY);
 
-    if ((data != NULL) && (size > 0U))
+    if ((data != NULL) && (size != 0U))
     {
         ST7735_DC_Data();
-        HAL_SPI_Transmit(&hspi2, (uint8_t*)data, size, HAL_MAX_DELAY);
+        (void)HAL_SPI_Transmit(&hspi2, (uint8_t*)data, size, HAL_MAX_DELAY);
     }
 
     ST7735_Unselect();
@@ -531,6 +520,10 @@ static void ST7735_RuntimeInit(void)
     s_spiDmaBusy = 0U;
     s_spiDmaError = 0U;
 
+    s_backlightLevel = 64U;
+    s_backlightApplied = 0xFFU;
+    s_backlightOffTick = HAL_GetTick();
+
     s_progressBarInitMask = 0U;
     memset(s_progressBarPrev, 0, sizeof(s_progressBarPrev));
 }
@@ -811,6 +804,33 @@ static uint8_t ST7735_ProcessFillCircleStep(void)
 
     return 0U;
 }
+/* ---------- Backlight helper ---------- */
+
+static void ST7735_UpdateBacklightPwm(void)
+{
+    uint32_t now = HAL_GetTick();
+    uint32_t remaining = 0U;
+    uint8_t pwm;
+
+    if ((int32_t)(s_backlightOffTick - now) > 0)
+    {
+        remaining = s_backlightOffTick - now;
+    }
+
+    pwm = (uint8_t)(((remaining >> 3) < s_backlightLevel) ? (remaining >> 3) : s_backlightLevel);
+
+    if (pwm > 127U)
+    {
+        pwm = 127U;
+    }
+
+    if ((pwm != s_backlightApplied) && (htim14.State != HAL_TIM_STATE_RESET))
+    {
+        __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, pwm);
+        s_backlightApplied = pwm;
+    }
+}
+
 /* ------------- Progress bar helpers ------------- */
 static inline uint8_t ProgressBar_clamp(uint8_t v)
 {
@@ -913,20 +933,7 @@ void ST7735_Init(void)
     ST7735_RuntimeInit();
     (void)ST7735_FillRect(0U, 0U, ST7735_WIDTH, ST7735_HEIGHT, ST7735_BLACK);
 }
-void ST7735_SetBacklightTimeout(uint32_t timeout_ms)
-{
-    s_backlightOffTick = HAL_GetTick() + timeout_ms;
-}
 
-void ST7735_SetBacklightLevel(uint8_t level_0_127)
-{
-    if (level_0_127 > 127U)
-    {
-        level_0_127 = 127U;
-    }
-
-    s_backlightLevel = level_0_127;
-}
 
 uint8_t ST7735_Clear(uint16_t color)
 {
@@ -939,28 +946,6 @@ uint8_t ST7735_Clear(uint16_t color)
         (uint8_t)(ST7735_HEIGHT - ProgressBar_PB_TH),
         color);
 }
-/*uint8_t ST7735_Clear(uint16_t color)
-{
-
-	ST7735_Command cmd;
-
-    memset(&cmd, 0, sizeof(cmd));
-    cmd.type = ST7735_CMD_FILL_RECT;
-    cmd.data.fillRect.x = 0U;
-    cmd.data.fillRect.y = 0U;
-    cmd.data.fillRect.w = ST7735_WIDTH;
-    cmd.data.fillRect.h = ST7735_HEIGHT;
-    cmd.data.fillRect.color = color;
-
-    // Clear прерывает текущую команду и очищает очередь
-    s_active.busy = 0U;
-    s_active.cmd.type = ST7735_CMD_NONE;
-    s_tx.type = ST7735_TX_NONE;
-    s_spiDmaBusy = 0U;
-    ST7735_QueueReset();
-
-    return ST7735_QueuePush(&cmd);
-}*/
 
 uint8_t ST7735_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color)
 {
@@ -1027,6 +1012,7 @@ uint8_t ST7735_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, 
 
     return ST7735_QueuePush(&cmd);
 }
+
 uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
 {
     const ProgressBar_Spec *spec;
@@ -1092,7 +1078,6 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
         return 0U;
     }
 
-    /* Ничего не изменилось */
     if (v == prev)
     {
         return 0U;
@@ -1172,75 +1157,55 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
     s_progressBarPrev[index] = v;
     return 0U;
 }
-static void ST7735_UpdateBacklightPwm(void)
+
+void ST7735_SetBacklightTimeout(uint32_t timeout_ms)
 {
-    uint32_t now = HAL_GetTick();
-    uint32_t remaining = 0U;
-    uint8_t pwm;
-
-    if ((int32_t)(s_backlightOffTick - now) > 0)
-    {
-        remaining = s_backlightOffTick - now;
-    }
-
-    pwm = (uint8_t)((remaining >> 3) < s_backlightLevel ? (remaining >> 3) : s_backlightLevel);
-
-    if (pwm > 127U)
-    {
-        pwm = 127U;
-    }
-
-    if ((pwm != s_backlightApplied) && (htim14.State != HAL_TIM_STATE_RESET))
-    {
-        __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, pwm);
-        s_backlightApplied = pwm;
-    }
+    s_backlightOffTick = HAL_GetTick() + timeout_ms;
 }
 
-/* ------------- Public API ------------- */
+void ST7735_SetBacklightLevel(uint8_t level_0_127)
+{
+    if (level_0_127 > 127U)
+    {
+        level_0_127 = 127U;
+    }
+
+    s_backlightLevel = level_0_127;
+}
+
 uint8_t ST7735_GetQueueFill(void)
 {
     return s_queueCount;
 }
 
-uint8_t ST7735_NeedsProcess(void)
-{
-	ST7735_UpdateBacklightPwm();
-    if (s_spiDmaBusy != 0U)
-    {
-        if (ST7735_TryRecoverDmaBusy() == 0U)
-            return 0U;
-    }
-
-    return ((s_active.busy != 0U) || (s_queueCount != 0U)) ? 1U : 0U;
-}
-
-uint8_t ST7735_IsBusy(void)
-{
-    if (s_spiDmaBusy != 0U)
-    {
-        (void)ST7735_TryRecoverDmaBusy();
-    }
-
-    return ((s_active.busy != 0U) ||
-            (s_queueCount != 0U) ||
-            (s_spiDmaBusy != 0U)) ? 1U : 0U;
-}
-
-void ST7735_Process(void)
+uint8_t ST7735_Process(void)
 {
     uint8_t done = 0U;
 
+    ST7735_UpdateBacklightPwm();
+
     if (s_spiDmaBusy != 0U)
     {
         if (ST7735_TryRecoverDmaBusy() == 0U)
-            return;
+        {
+            return 0U;
+        }
     }
 
-    if (!ST7735_StartNextCommand())
-        return;
+    if ((s_active.busy == 0U) && (s_queueCount == 0U))
+    {
+        return 0U;
+    }
 
-    switch ((ST7735_CommandType)s_active.cmd.type)
+    if (s_active.busy == 0U)
+    {
+        if (ST7735_StartNextCommand() == 0U)
+        {
+            return 0U;
+        }
+    }
+
+    switch (s_active.cmd.type)
     {
         case ST7735_CMD_FILL_RECT:
             done = ST7735_ProcessRectLike(
@@ -1264,11 +1229,15 @@ void ST7735_Process(void)
             break;
     }
 
-    if (done)
+    if (done != 0U)
     {
         s_active.busy = 0U;
         s_active.cmd.type = ST7735_CMD_NONE;
+        memset(&s_active.state, 0, sizeof(s_active.state));
+        s_tx.type = ST7735_TX_NONE;
     }
+
+    return 1U;
 }
 
 /* ---------- HAL callbacks ---------- */

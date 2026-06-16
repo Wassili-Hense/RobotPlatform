@@ -32,7 +32,7 @@ void ST7735_SetBacklightLevel(uint8_t level_0_127);
 void ST7735_Init(void);
 
 /* Вызывать в главном цикле */
-void ST7735_Process(void);
+uint8_t ST7735_Process(void);
 
 /*
  * Команды ставятся в очередь и сразу возвращают управление.
@@ -71,8 +71,6 @@ uint8_t ST7735_GetQueueFill(void);
  * Возвращает 1, если есть незавершённая команда и можно сразу вызвать ST7735_Process().
  * Если DMA ещё занята, возвращает 0.
  */
-uint8_t ST7735_NeedsProcess(void);
-uint8_t ST7735_IsBusy(void);
 
 #ifdef __cplusplus
 }

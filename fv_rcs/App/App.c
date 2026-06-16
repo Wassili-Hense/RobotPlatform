@@ -1,4 +1,5 @@
 #include "App.h"
+
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
@@ -6,17 +7,20 @@
 #include "spi.h"
 #include "tim.h"
 #include "gpio.h"
+
 #include "adc_inputs.h"
 #include "buttons.h"
 #include "I2cSlave.h"
 #include "st7735.h"
 
-#define APP_POWER_OFF_COUNT          1000U
-#define APP_ADC_START_PERIOD_MS       100U
-#define APP_ADC_FORCE_SEND_MS        2500U
-#define APP_ADC_MIN_SEND_PERIOD_MS    100U
-#define APP_ADC_DELTA                 15U
-#define APP_I2C_ITEM_COUNT            13U
+#define APP_POWER_OFF_COUNT           1000U
+#define APP_ADC_START_PERIOD_MS        100U
+#define APP_ADC_FORCE_SEND_MS         2500U
+#define APP_ADC_MIN_SEND_PERIOD_MS     100U
+#define APP_ADC_DELTA                   15U
+
+#define APP_I2C_ITEM_COUNT             13U
+
 #define APP_ABS_DIFF_U16(a, b) (((a) >= (b)) ? ((a) - (b)) : ((b) - (a)))
 
 enum
@@ -39,6 +43,7 @@ enum
 /* -------------------------------------------------------------------------- */
 /* I2C state                                                                  */
 /* -------------------------------------------------------------------------- */
+
 static volatile uint8_t  s_i2cDirty[APP_I2C_ITEM_COUNT];
 static volatile uint16_t s_i2cActualValue[APP_I2C_ITEM_COUNT];
 static volatile uint16_t s_i2cSentValue[APP_I2C_ITEM_COUNT];
@@ -47,6 +52,7 @@ static volatile uint32_t s_i2cTick[APP_I2C_ITEM_COUNT];
 /* -------------------------------------------------------------------------- */
 /* App state                                                                  */
 /* -------------------------------------------------------------------------- */
+
 static volatile uint8_t s_toneBusy = 0U;
 static volatile uint32_t s_toneStopTick = 0U;
 static uint32_t s_lastAppTick = 0U;
@@ -55,6 +61,7 @@ static uint32_t s_adcStartTick = 0U;
 /* -------------------------------------------------------------------------- */
 /* I2C callbacks and data preparation                                         */
 /* -------------------------------------------------------------------------- */
+
 static void App_PrepareDigitalForI2c(uint8_t index, uint16_t value)
 {
     if (index >= APP_I2C_ITEM_COUNT)
@@ -63,6 +70,7 @@ static void App_PrepareDigitalForI2c(uint8_t index, uint16_t value)
     }
 
     s_i2cActualValue[index] = value;
+
     if (s_i2cSentValue[index] != value)
     {
         s_i2cDirty[index] = 1U;
@@ -84,9 +92,7 @@ static void App_ProcessAnalogForI2c(uint8_t adcChannel, uint16_t value, uint8_t 
     if (s_i2cDirty[index] == 0U)
     {
         uint16_t prev = s_i2cSentValue[index];
-        uint16_t diff = (s_i2cActualValue[index] >= prev)
-                      ? (uint16_t)(s_i2cActualValue[index] - prev)
-                      : (uint16_t)(prev - s_i2cActualValue[index]);  // use APP_ABS_DIFF_U16
+        uint16_t diff = APP_ABS_DIFF_U16(s_i2cActualValue[index], prev);
         uint32_t dt = HAL_GetTick() - s_i2cTick[index];
 
         if (((dt > APP_ADC_MIN_SEND_PERIOD_MS) && (diff > APP_ADC_DELTA)) ||
@@ -118,11 +124,14 @@ static uint8_t App_I2cRequestCallback(uint8_t *outData)
     }
 
     value = s_i2cActualValue[index];
+
     outData[0] = (uint8_t)((index << 4) | ((value >> 8) & 0x0FU));
     outData[1] = (uint8_t)value;
+
     s_i2cDirty[index] = 0U;
     s_i2cSentValue[index] = value;
     s_i2cTick[index] = HAL_GetTick();
+
     return 2U;
 }
 
@@ -148,6 +157,7 @@ static void App_ResetI2cState(void)
 /* -------------------------------------------------------------------------- */
 /* Tone                                                                       */
 /* -------------------------------------------------------------------------- */
+
 void Tone(uint16_t divider, uint16_t delay_ms)
 {
     if (htim1.State == HAL_TIM_STATE_RESET)
@@ -156,6 +166,7 @@ void Tone(uint16_t divider, uint16_t delay_ms)
     }
 
     HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+
     if (delay_ms == 0U)
     {
         s_toneBusy = 0U;
@@ -199,6 +210,7 @@ uint8_t Tone_IsBusy(void)
 /* -------------------------------------------------------------------------- */
 /* Power                                                                      */
 /* -------------------------------------------------------------------------- */
+
 static void App_ProcessPower(void)
 {
     static uint16_t offCounter = 0U;
@@ -227,6 +239,7 @@ static void App_ProcessPower(void)
             {
                 Tone(500U, 10U);
             }
+
             if ((offCounter * 3U) > (APP_POWER_OFF_COUNT * 4U))
             {
                 offCounter = APP_POWER_OFF_COUNT + 1U;
@@ -249,23 +262,28 @@ static void App_ProcessPower(void)
 /* -------------------------------------------------------------------------- */
 /* Progress bar / battery SOC                                                 */
 /* -------------------------------------------------------------------------- */
-// Ubat ≈ ADC_V * 0.00399446 - 0.19284
-static const uint16_t ocv_adc[] = {
-		850, 874, 919, 940, 965, 975, 982, 990, 1002, 1010, 1015, 1022, 1030
 
-};
-// SOC*0.7 for Progress Bar
-static const uint8_t ocv_soc[] = {
-		0,   4,  14,  21,  31,  35,  39, 42,  49,  53,  56,  63,  69
+/* Ubat ≈ ADC_V * 0.00399446 - 0.19284 */
 
+static const uint16_t ocv_adc[] =
+{
+    850, 874, 919, 940, 965, 975, 982, 990, 1002, 1010, 1015, 1022, 1030
 };
+
+/* SOC * 0.7 for progress bar (0..70) */
+static const uint8_t ocv_soc[] =
+{
+    0, 4, 14, 21, 31, 35, 39, 42, 49, 53, 56, 63, 69
+};
+
 #define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
 
 static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2)
 {
-    uint16_t dx = x2 - x1;
-    uint16_t num = x - x1;
+    uint16_t dx = (uint16_t)(x2 - x1);
+    uint16_t num = (uint16_t)(x - x1);
     uint16_t t = (uint16_t)((num << 8) / dx);
+
     return (uint8_t)(y1 + ((((uint16_t)(y2 - y1)) * t) >> 8));
 }
 
@@ -274,14 +292,23 @@ static uint8_t adc_to_soc(uint16_t adc)
     int low;
     int high;
 
-    if (adc <= ocv_adc[0]) return ocv_soc[0];
-    if (adc >= ocv_adc[OCV_POINTS - 1U]) return ocv_soc[OCV_POINTS - 1U];
+    if (adc <= ocv_adc[0])
+    {
+        return ocv_soc[0];
+    }
+
+    if (adc >= ocv_adc[OCV_POINTS - 1U])
+    {
+        return ocv_soc[OCV_POINTS - 1U];
+    }
 
     low = 0;
     high = (int)OCV_POINTS - 1;
+
     while ((high - low) > 1)
     {
         int mid = (low + high) >> 1;
+
         if (adc < ocv_adc[mid])
         {
             high = mid;
@@ -298,6 +325,7 @@ static uint8_t adc_to_soc(uint16_t adc)
 /* -------------------------------------------------------------------------- */
 /* ADC service                                                                */
 /* -------------------------------------------------------------------------- */
+
 static void App_ProcessAdc(void)
 {
     uint32_t tick = HAL_GetTick();
@@ -311,9 +339,14 @@ static void App_ProcessAdc(void)
     {
         if (ADC_isChanged(ADC_INPUT_CH_V) != 0U)
         {
-        	(void)ST7735_DrawProgressBar(3U, adc_to_soc(ADC_V));        }
+            (void)ST7735_DrawProgressBar(3U, adc_to_soc(ADC_V));
+        }
+        if (ADC_isChanged(ADC_INPUT_CH_X) != 0U)
+        {
+            (void)ST7735_DrawProgressBar(2U, ADC_X / 64);
+        }
 
-        App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
+        //App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
 
         if (ADC_isChanged(ADC_INPUT_CH_U) != 0U)
@@ -329,15 +362,18 @@ static void App_ProcessAdc(void)
 /* -------------------------------------------------------------------------- */
 /* App lifecycle                                                              */
 /* -------------------------------------------------------------------------- */
+
 void App_Init(void)
 {
     s_lastAppTick = HAL_GetTick();
     s_adcStartTick = s_lastAppTick - APP_ADC_START_PERIOD_MS;
 
     App_ResetI2cState();
+
     AdcInputs_Init();
     Buttons_Init();
     I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
+
     ST7735_Init();
     AdcInputs_Start();
 
@@ -350,10 +386,8 @@ void App_Init(void)
     while (Buttons_Get(0U) != 0U)
     {
         App_ProcessTone();
-        if (ST7735_NeedsProcess() != 0U)
-        {
-            ST7735_Process();
-        }
+        (void)ST7735_Process();
+
         __WFI();
     }
 
@@ -376,7 +410,9 @@ void App_Run(void)
         for (i = 0U; i < 10U; i++)
         {
             uint8_t button = Buttons_Get(i);
+
             App_PrepareDigitalForI2c((uint8_t)(APP_I2C_INDEX_BUTTON_0 + i), button);
+
             if (button != 0U)
             {
                 anyButtonPressed = 1U;
@@ -385,7 +421,7 @@ void App_Run(void)
 
         if (anyButtonPressed != 0U)
         {
-        	ST7735_SetBacklightTimeout(15000U);
+            ST7735_SetBacklightTimeout(15000U);
         }
 
         App_ProcessPower();
@@ -393,16 +429,13 @@ void App_Run(void)
         App_ProcessAdc();
     }
 
-    if (ST7735_NeedsProcess() != 0U)
-    {
-        ST7735_Process();
-        App_PrepareDigitalForI2c(
-            APP_I2C_INDEX_STATUS,
-            ((ADC_U > 1000U) ? 2U : 0U) |
-            ((ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 4U)) ? 1U : 0U));
-    }
-    else if (HAL_GetTick() == s_lastAppTick)
+    if (ST7735_Process() == 0U && HAL_GetTick() == s_lastAppTick)
     {
         __WFI();
     }
+    App_PrepareDigitalForI2c(
+        APP_I2C_INDEX_STATUS,
+        ((ADC_U > 1000U) ? 2U : 0U) |
+        ((ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 4U)) ? 1U : 0U));
+
 }
