@@ -1,4 +1,5 @@
-#include "adc_inputs.h"
+#include "inputs.h"
+#include "gpio.h"
 #include <string.h>
 
 extern ADC_HandleTypeDef hadc;
@@ -20,6 +21,34 @@ static uint16_t s_hist_u[5];
 static volatile uint8_t s_adcBusy = 0U;
 static uint8_t s_initialized = 0U;
 static volatile uint8_t s_changedMask = 0U;
+
+/* ---------------- Digital Inputs ---------------- */
+
+#define BUTTON_COUNT        10U
+#define DEBOUNCE_TICKS      20U   /* 20 ms при вызове Buttons_Get(ch) каждые 1 мс для данного канала */
+
+typedef struct
+{
+    GPIO_TypeDef* port;
+    uint16_t pin;
+} ButtonPin;
+
+static const ButtonPin s_buttonPins[BUTTON_COUNT] =
+{
+    {GPIOA, GPIO_PIN_12}, // Button ON
+    {GPIOB, GPIO_PIN_10}, // Button Fire
+    {GPIOA, GPIO_PIN_6 }, // Button A
+    {GPIOF, GPIO_PIN_1 }, // Button B
+    {GPIOA, GPIO_PIN_5 }, // Button C
+    {GPIOC, GPIO_PIN_15}, // Button D
+    {GPIOB, GPIO_PIN_0 }, // Button UP
+    {GPIOA, GPIO_PIN_7 }, // Button Down
+    {GPIOF, GPIO_PIN_7 }, // Button Ok
+    {GPIOC, GPIO_PIN_13}  // Button Back
+};
+
+static uint8_t s_integrator[BUTTON_COUNT];
+static uint8_t s_state[BUTTON_COUNT];
 
 /* ---------------- helpers ---------------- */
 static void HistShiftAppend(uint16_t hist[5], uint16_t value)
@@ -127,8 +156,18 @@ static void UpdateFilteredValues(void)
     s_changedMask |= changedMask;
 }
 
+static uint8_t Buttons_ReadRaw(uint8_t ch)
+{
+    GPIO_PinState pinState;
+
+    pinState = HAL_GPIO_ReadPin(s_buttonPins[ch].port, s_buttonPins[ch].pin);
+
+    /* active low */
+    return (pinState == GPIO_PIN_RESET) ? 1U : 0U;
+}
+
 /* ---------------- public ---------------- */
-void AdcInputs_Init(void)
+void Inp_Init(void)
 {
     memset((void*)s_dma, 0, sizeof(s_dma));
     memset((void*)s_hist_v, 0, sizeof(s_hist_v));
@@ -144,9 +183,20 @@ void AdcInputs_Init(void)
     s_adcBusy = 0U;
     s_initialized = 0U;
     s_changedMask = 0U;
+
+    uint8_t i;
+    uint8_t raw;
+
+    for (i = 0U; i < BUTTON_COUNT; i++)
+    {
+        raw = Buttons_ReadRaw(i);
+        s_state[i] = raw;
+        s_integrator[i] = raw ? DEBOUNCE_TICKS : 0U;
+    }
+
 }
 
-void AdcInputs_Start(void)
+void Inp_AdcStart(void)
 {
     if (s_adcBusy != 0U)
     {
@@ -157,7 +207,7 @@ void AdcInputs_Start(void)
     HAL_ADC_Start_DMA(&hadc, (uint32_t*)s_dma, ADC_INPUT_COUNT);
 }
 
-uint8_t ADC_isChanged(uint8_t channel)
+uint8_t Inp_AdcisChanged(uint8_t channel)
 {
     uint8_t mask;
     uint8_t changed;
@@ -176,6 +226,44 @@ uint8_t ADC_isChanged(uint8_t channel)
     }
 
     return changed;
+}
+uint8_t Inp_DiGet(uint8_t ch)
+{
+    uint8_t raw;
+
+    if (ch >= BUTTON_COUNT)
+    {
+        return 0U;
+    }
+
+    raw = Buttons_ReadRaw(ch);
+
+    if (raw != 0U)
+    {
+        if (s_integrator[ch] < DEBOUNCE_TICKS)
+        {
+            s_integrator[ch]++;
+        }
+    }
+    else
+    {
+        if (s_integrator[ch] > 0U)
+        {
+            s_integrator[ch]--;
+        }
+    }
+
+    if (s_integrator[ch] == 0U)
+    {
+        s_state[ch] = 0U;
+    }
+    else if (s_integrator[ch] >= DEBOUNCE_TICKS)
+    {
+        s_integrator[ch] = DEBOUNCE_TICKS;
+        s_state[ch] = 1U;
+    }
+
+    return s_state[ch];
 }
 
 /* ---------------- HAL callbacks ---------------- */
@@ -197,3 +285,4 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadcHandle)
         s_adcBusy = 0U;
     }
 }
+

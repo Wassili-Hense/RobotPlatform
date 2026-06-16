@@ -8,9 +8,8 @@
 #include "tim.h"
 #include "gpio.h"
 
-#include "adc_inputs.h"
-#include "buttons.h"
 #include "I2cSlave.h"
+#include "inputs.h"
 #include "st7735.h"
 
 #define APP_POWER_OFF_COUNT           1000U
@@ -84,7 +83,7 @@ static void App_ProcessAnalogForI2c(uint8_t adcChannel, uint16_t value, uint8_t 
         return;
     }
 
-    if (ADC_isChanged(adcChannel) != 0U)
+    if (Inp_AdcisChanged(adcChannel) != 0U)
     {
         s_i2cActualValue[index] = value;
     }
@@ -333,28 +332,28 @@ static void App_ProcessAdc(void)
     if ((tick - s_adcStartTick) >= APP_ADC_START_PERIOD_MS)
     {
         s_adcStartTick = tick;
-        AdcInputs_Start();
+        Inp_AdcStart();
     }
     else
     {
-        if (ADC_isChanged(ADC_INPUT_CH_V) != 0U)
+        if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U)
         {
-            (void)ST7735_DrawProgressBar(3U, adc_to_soc(ADC_V));
+            (void)LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));
         }
-        if (ADC_isChanged(ADC_INPUT_CH_X) != 0U)
+        if (Inp_AdcisChanged(ADC_INPUT_CH_X) != 0U)
         {
-            (void)ST7735_DrawProgressBar(2U, ADC_X / 64);
+            (void)LCD_DrawProgressBar(2U, ADC_X / 64);
         }
 
         //App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
 
-        if (ADC_isChanged(ADC_INPUT_CH_U) != 0U)
+        if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U)
         {
             App_PrepareDigitalForI2c(
                 APP_I2C_INDEX_STATUS,
                 ((ADC_U > 1000U) ? 2U : 0U) |
-                ((ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 4U)) ? 1U : 0U));
+                ((LCD_GetQueueFill() > (LCD_QUEUE_SIZE - 4U)) ? 1U : 0U));
         }
     }
 }
@@ -370,23 +369,22 @@ void App_Init(void)
 
     App_ResetI2cState();
 
-    AdcInputs_Init();
-    Buttons_Init();
+    Inp_Init();
     I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
 
-    ST7735_Init();
-    AdcInputs_Start();
+    LCD_Init();
+    Inp_AdcStart();
 
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);  /* Power ON latch */
-    ST7735_SetBacklightTimeout(5000U);
+    LCD_SetBacklightTimeout(5000U);
 
     Tone(757U, 45U);
     HAL_Delay(65U);
 
-    while (Buttons_Get(0U) != 0U)
+    while (Inp_DiGet(0U) != 0U)
     {
         App_ProcessTone();
-        (void)ST7735_Process();
+        (void)LCD_Process();
 
         __WFI();
     }
@@ -409,7 +407,7 @@ void App_Run(void)
 
         for (i = 0U; i < 10U; i++)
         {
-            uint8_t button = Buttons_Get(i);
+            uint8_t button = Inp_DiGet(i);
 
             App_PrepareDigitalForI2c((uint8_t)(APP_I2C_INDEX_BUTTON_0 + i), button);
 
@@ -421,7 +419,7 @@ void App_Run(void)
 
         if (anyButtonPressed != 0U)
         {
-            ST7735_SetBacklightTimeout(15000U);
+            LCD_SetBacklightTimeout(15000U);
         }
 
         App_ProcessPower();
@@ -429,13 +427,13 @@ void App_Run(void)
         App_ProcessAdc();
     }
 
-    if (ST7735_Process() == 0U && HAL_GetTick() == s_lastAppTick)
+    if (LCD_Process() == 0U && HAL_GetTick() == s_lastAppTick)
     {
         __WFI();
     }
     App_PrepareDigitalForI2c(
         APP_I2C_INDEX_STATUS,
         ((ADC_U > 1000U) ? 2U : 0U) |
-        ((ST7735_GetQueueFill() > (ST7735_QUEUE_SIZE - 4U)) ? 1U : 0U));
+        ((LCD_GetQueueFill() > (LCD_QUEUE_SIZE - 4U)) ? 1U : 0U));
 
 }

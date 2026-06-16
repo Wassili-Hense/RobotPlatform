@@ -1,29 +1,28 @@
+#include <font_7x10.h>
 #include "st7735.h"
 #include "spi.h"
 #include "gpio.h"
 #include "tim.h"
-#include "st7735_font_7x10.h"
-
 #include <string.h>
 
 #define ST7735_FONT_GLYPH_INDEX(ch) \
-    ((((uint8_t)(ch)) - ST7735_FONT_7X10_FIRST_CHAR) * ST7735_FONT_7X10_GLYPH_ROWS)
+    ((((uint8_t)(ch)) - FONT_FIRST_CHAR) * FONT_7X10_GLYPH_ROWS)
 
-#define ST7735_TEXT_CELL_WIDTH   (ST7735_FONT_7X10_WIDTH + ST7735_FONT_7X10_SPACING)
+#define ST7735_TEXT_CELL_WIDTH   (FONT_7X10_WIDTH + FONT_7X10_SPACING)
 #define ST7735_MAX_TEXT_LEN      21U
 #define ST7735_TEXT_STORAGE_LEN  (ST7735_MAX_TEXT_LEN + 1U)
 
 #define ST7735_X_OFFSET 0U
 #define ST7735_Y_OFFSET 24U
 
-#define ST7735_IO_BUFFER_SIZE      (ST7735_TEXT_CELL_WIDTH * ST7735_FONT_7X10_HEIGHT * 2U)
+#define ST7735_IO_BUFFER_SIZE      (ST7735_TEXT_CELL_WIDTH * FONT_7X10_HEIGHT * 2U)
 #define ST7735_COLOR_CHUNK_PIXELS  (ST7735_IO_BUFFER_SIZE / 2U)
 
 #define ProgressBar_PB_LEN   70U
-#define ProgressBar_PB_TH     5U
+#define ProgressBar_PB_TH     4U
 
 #define ProgressBar_RED_LIMIT    3U
-#define ProgressBar_GREEN_LIMIT 67U
+#define ProgressBar_GREEN_LIMIT ProgressBar_RED_LIMIT + 64U
 #define ProgressBar_RANGE       (ProgressBar_GREEN_LIMIT - ProgressBar_RED_LIMIT)
 
 typedef enum
@@ -134,7 +133,7 @@ typedef struct
 } ST7735_TxState;
 /* ---------- Runtime state ---------- */
 
-static ST7735_Command s_queue[ST7735_QUEUE_SIZE];
+static ST7735_Command s_queue[LCD_QUEUE_SIZE];
 static uint8_t s_queueHead = 0U;
 static uint8_t s_queueTail = 0U;
 static uint8_t s_queueCount = 0U;
@@ -154,10 +153,10 @@ static uint32_t s_backlightOffTick = 0U;
 /* progress bars */
 static const ProgressBar_Spec s_progressBars[4] =
 {
-    { .x0 = 0U,                                                .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    },
-    { .x0 = (uint8_t)(ST7735_WIDTH / 2U - 1U),                 .y0 = 0U,                 .dir = ProgressBar_DIR_LEFT  },
-    { .x0 = (uint8_t)(ST7735_WIDTH / 2U),                      .y0 = 0U,                 .dir = ProgressBar_DIR_RIGHT },
-    { .x0 = (uint8_t)(ST7735_WIDTH - 1U - ProgressBar_PB_TH),  .y0 = ST7735_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    }
+    { .x0 = 0U,                                                .y0 = LCD_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    },
+    { .x0 = (uint8_t)(LCD_WIDTH / 2U - 1U),                 .y0 = 0U,                 .dir = ProgressBar_DIR_LEFT  },
+    { .x0 = (uint8_t)(LCD_WIDTH / 2U),                      .y0 = 0U,                 .dir = ProgressBar_DIR_RIGHT },
+    { .x0 = (uint8_t)(LCD_WIDTH - 1U - ProgressBar_PB_TH),  .y0 = LCD_HEIGHT - 1U, .dir = ProgressBar_DIR_UP    }
 };
 
 static uint8_t s_progressBarInitMask = 0U;
@@ -278,7 +277,7 @@ static uint8_t ST7735_StartDma(uint8_t* data, uint16_t size)
  *
  * Какую проблему решает:
  * В текущем драйвере ST7735_NeedsProcess() возвращает 0, пока s_spiDmaBusy != 0,
- * а ST7735_Process() не продвигает очередь/активную команду. Если completion-
+ * а LCD_Process() не продвигает очередь/активную команду. Если completion-
  * callback не дошёл, экран может "зависнуть" на последнем кадре, хотя DMA и SPI
  * уже реально освободились. Эта функция устраняет такое ложное busy-состояние.
  */
@@ -421,16 +420,16 @@ static uint8_t ST7735_BeginCharTransfer(uint8_t x, uint8_t y, char ch, uint16_t 
     uint8_t row;
     uint8_t col;
 
-    if (((uint8_t)ch < ST7735_FONT_7X10_FIRST_CHAR) || ((uint8_t)ch > ST7735_FONT_7X10_LAST_CHAR))
+    if (((uint8_t)ch < FONT_FIRST_CHAR) || ((uint8_t)ch > FONT_LAST_CHAR))
         ch = '?';
 
     glyph = &Font7x10[ST7735_FONT_GLYPH_INDEX(ch)];
 
-    for (row = 0U; row < ST7735_FONT_7X10_HEIGHT; row++)
+    for (row = 0U; row < FONT_7X10_HEIGHT; row++)
     {
         uint8_t rowBits = glyph[row];
 
-        for (col = 0U; col < ST7735_FONT_7X10_WIDTH; col++)
+        for (col = 0U; col < FONT_7X10_WIDTH; col++)
         {
             uint16_t drawColor =
                 (rowBits & (uint8_t)(0x80U >> col)) ? color : bgColor;
@@ -447,7 +446,7 @@ static uint8_t ST7735_BeginCharTransfer(uint8_t x, uint8_t y, char ch, uint16_t 
         x,
         y,
         (uint8_t)(x + ST7735_TEXT_CELL_WIDTH - 1U),
-        (uint8_t)(y + ST7735_FONT_7X10_HEIGHT - 1U));
+        (uint8_t)(y + FONT_7X10_HEIGHT - 1U));
 
     ST7735_Select();
     ST7735_DC_Data();
@@ -492,11 +491,11 @@ static void ST7735_QueueReset(void)
 
 static uint8_t ST7735_QueuePush(const ST7735_Command* cmd)
 {
-    if (s_queueCount >= ST7735_QUEUE_SIZE)
+    if (s_queueCount >= LCD_QUEUE_SIZE)
         return 0U;
 
     s_queue[s_queueTail] = *cmd;
-    s_queueTail = (uint8_t)((s_queueTail + 1U) % ST7735_QUEUE_SIZE);
+    s_queueTail = (uint8_t)((s_queueTail + 1U) % LCD_QUEUE_SIZE);
     s_queueCount++;
     return 1U;
 }
@@ -507,7 +506,7 @@ static uint8_t ST7735_QueuePop(ST7735_Command* cmd)
         return 0U;
 
     *cmd = s_queue[s_queueHead];
-    s_queueHead = (uint8_t)((s_queueHead + 1U) % ST7735_QUEUE_SIZE);
+    s_queueHead = (uint8_t)((s_queueHead + 1U) % LCD_QUEUE_SIZE);
     s_queueCount--;
     return 1U;
 }
@@ -543,7 +542,7 @@ static void ST7735_CircleAddSegment(int16_t x, int16_t y, int16_t h)
     if (h <= 0)
         return;
 
-    if ((x < 0) || (x >= (int16_t)ST7735_WIDTH))
+    if ((x < 0) || (x >= (int16_t)LCD_WIDTH))
         return;
 
     if (y < 0)
@@ -552,11 +551,11 @@ static void ST7735_CircleAddSegment(int16_t x, int16_t y, int16_t h)
         y = 0;
     }
 
-    if (y >= (int16_t)ST7735_HEIGHT)
+    if (y >= (int16_t)LCD_HEIGHT)
         return;
 
-    if ((y + h) > (int16_t)ST7735_HEIGHT)
-        h = (int16_t)ST7735_HEIGHT - y;
+    if ((y + h) > (int16_t)LCD_HEIGHT)
+        h = (int16_t)LCD_HEIGHT - y;
 
     if (h <= 0)
         return;
@@ -677,19 +676,19 @@ static uint8_t ST7735_ProcessDrawTextStep(void)
     {
         s_active.state.text.cursorX = t->x;
         s_active.state.text.cursorY =
-            (uint8_t)(s_active.state.text.cursorY + ST7735_FONT_7X10_HEIGHT);
+            (uint8_t)(s_active.state.text.cursorY + FONT_7X10_HEIGHT);
         s_active.state.text.index++;
         return 0U;
     }
 
-    if ((uint16_t)s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH > ST7735_WIDTH)
+    if ((uint16_t)s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH > LCD_WIDTH)
     {
         s_active.state.text.cursorX = t->x;
         s_active.state.text.cursorY =
-            (uint8_t)(s_active.state.text.cursorY + ST7735_FONT_7X10_HEIGHT);
+            (uint8_t)(s_active.state.text.cursorY + FONT_7X10_HEIGHT);
     }
 
-    if ((uint16_t)s_active.state.text.cursorY + ST7735_FONT_7X10_HEIGHT > ST7735_HEIGHT)
+    if ((uint16_t)s_active.state.text.cursorY + FONT_7X10_HEIGHT > LCD_HEIGHT)
         return 1U;
 
     if (ST7735_BeginCharTransfer(
@@ -841,12 +840,12 @@ static inline uint16_t ProgressBar_color_for_len(uint8_t v)
 {
     if (v <= ProgressBar_RED_LIMIT)
     {
-        return ST7735_RED;
+        return LCD_RED;
     }
 
     if (v >= ProgressBar_GREEN_LIMIT)
     {
-        return ST7735_GREEN;
+        return LCD_GREEN;
     }
 
     {
@@ -891,7 +890,7 @@ static void ProgressBar_GetBounds(
 }
 /* ---------- Public API ---------- */
 
-void ST7735_Init(void)
+void LCD_Init(void)
 {
     ST7735_Reset();
     ST7735_WriteCommand(0x11);
@@ -931,34 +930,34 @@ void ST7735_Init(void)
     HAL_Delay(20);
 
     ST7735_RuntimeInit();
-    (void)ST7735_FillRect(0U, 0U, ST7735_WIDTH, ST7735_HEIGHT, ST7735_BLACK);
+    (void)LCD_FillRect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, LCD_BLACK);
 }
 
 
-uint8_t ST7735_Clear(uint16_t color)
+uint8_t LCD_Clear(uint16_t color)
 {
     ST7735_QueueReset();
 
-    return ST7735_FillRect(
+    return LCD_FillRect(
         ProgressBar_PB_TH,
         ProgressBar_PB_TH,
-        (uint8_t)(ST7735_WIDTH - (2U * ProgressBar_PB_TH) - 1U),
-        (uint8_t)(ST7735_HEIGHT - ProgressBar_PB_TH),
+        (uint8_t)(LCD_WIDTH - (2U * ProgressBar_PB_TH) - 1U),
+        (uint8_t)(LCD_HEIGHT - ProgressBar_PB_TH),
         color);
 }
 
-uint8_t ST7735_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color)
+uint8_t LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color)
 {
     ST7735_Command cmd;
 
-    if ((x >= ST7735_WIDTH) || (y >= ST7735_HEIGHT) || (w == 0U) || (h == 0U))
+    if ((x >= LCD_WIDTH) || (y >= LCD_HEIGHT) || (w == 0U) || (h == 0U))
         return 0U;
 
-    if ((uint16_t)x + w > ST7735_WIDTH)
-        w = (uint8_t)(ST7735_WIDTH - x);
+    if ((uint16_t)x + w > LCD_WIDTH)
+        w = (uint8_t)(LCD_WIDTH - x);
 
-    if ((uint16_t)y + h > ST7735_HEIGHT)
-        h = (uint8_t)(ST7735_HEIGHT - y);
+    if ((uint16_t)y + h > LCD_HEIGHT)
+        h = (uint8_t)(LCD_HEIGHT - y);
 
     memset(&cmd, 0, sizeof(cmd));
     cmd.type = ST7735_CMD_FILL_RECT;
@@ -971,7 +970,7 @@ uint8_t ST7735_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t col
     return ST7735_QueuePush(&cmd);
 }
 
-uint8_t ST7735_FillCircle(uint8_t x0, uint8_t y0, uint8_t r, uint16_t color)
+uint8_t LCD_FillCircle(uint8_t x0, uint8_t y0, uint8_t r, uint16_t color)
 {
     ST7735_Command cmd;
 
@@ -988,7 +987,7 @@ uint8_t ST7735_FillCircle(uint8_t x0, uint8_t y0, uint8_t r, uint16_t color)
     return ST7735_QueuePush(&cmd);
 }
 
-uint8_t ST7735_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, uint16_t bgColor)
+uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, uint16_t bgColor)
 {
     ST7735_Command cmd;
     uint8_t i = 0U;
@@ -1013,7 +1012,7 @@ uint8_t ST7735_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, 
     return ST7735_QueuePush(&cmd);
 }
 
-uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
+uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value_pixels)
 {
     const ProgressBar_Spec *spec;
     uint8_t v;
@@ -1036,7 +1035,7 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
      * Изменение цвета + дельта:
      *   до 2 команд
      */
-    if ((ST7735_QUEUE_SIZE - ST7735_GetQueueFill()) < 4U)
+    if ((LCD_QUEUE_SIZE - LCD_GetQueueFill()) < 4U)
     {
         return 1U;
     }
@@ -1052,23 +1051,23 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
     /* Первый вызов: рисуем весь фон и текущее значение */
     if ((s_progressBarInitMask & (1U << index)) == 0U)
     {
-        (void)ST7735_FillRect(bx, by, bw, bh, ST7735_GRAY);
+        (void)LCD_FillRect(bx, by, bw, bh, LCD_GRAY);
 
         if (v > 0U)
         {
             switch (spec->dir)
             {
                 case ProgressBar_DIR_RIGHT:
-                    (void)ST7735_FillRect(bx, by, v, bh, fg);
+                    (void)LCD_FillRect(bx, by, v, bh, fg);
                     break;
 
                 case ProgressBar_DIR_LEFT:
-                    (void)ST7735_FillRect((uint8_t)(spec->x0 - (v - 1U)), by, v, bh, fg);
+                    (void)LCD_FillRect((uint8_t)(spec->x0 - (v - 1U)), by, v, bh, fg);
                     break;
 
                 case ProgressBar_DIR_UP:
                 default:
-                    (void)ST7735_FillRect(bx, (uint8_t)(spec->y0 - (v - 1U)), bw, v, fg);
+                    (void)LCD_FillRect(bx, (uint8_t)(spec->y0 - (v - 1U)), bw, v, fg);
                     break;
             }
         }
@@ -1089,11 +1088,11 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
         switch (spec->dir)
         {
             case ProgressBar_DIR_RIGHT:
-                (void)ST7735_FillRect(bx, by, (v < prev) ? v : prev, bh, fg);
+                (void)LCD_FillRect(bx, by, (v < prev) ? v : prev, bh, fg);
                 break;
 
             case ProgressBar_DIR_LEFT:
-                (void)ST7735_FillRect(
+                (void)LCD_FillRect(
                     (uint8_t)(spec->x0 - (((v < prev) ? v : prev) - 1U)),
                     by,
                     (v < prev) ? v : prev,
@@ -1103,7 +1102,7 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
 
             case ProgressBar_DIR_UP:
             default:
-                (void)ST7735_FillRect(
+                (void)LCD_FillRect(
                     bx,
                     (uint8_t)(spec->y0 - (((v < prev) ? v : prev) - 1U)),
                     bw,
@@ -1120,16 +1119,16 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
         switch (spec->dir)
         {
             case ProgressBar_DIR_RIGHT:
-                (void)ST7735_FillRect((uint8_t)(bx + prev), by, delta, bh, fg);
+                (void)LCD_FillRect((uint8_t)(bx + prev), by, delta, bh, fg);
                 break;
 
             case ProgressBar_DIR_LEFT:
-                (void)ST7735_FillRect((uint8_t)(spec->x0 - (v - 1U)), by, delta, bh, fg);
+                (void)LCD_FillRect((uint8_t)(spec->x0 - (v - 1U)), by, delta, bh, fg);
                 break;
 
             case ProgressBar_DIR_UP:
             default:
-                (void)ST7735_FillRect(bx, (uint8_t)(spec->y0 - (v - 1U)), bw, delta, fg);
+                (void)LCD_FillRect(bx, (uint8_t)(spec->y0 - (v - 1U)), bw, delta, fg);
                 break;
         }
     }
@@ -1140,16 +1139,16 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
         switch (spec->dir)
         {
             case ProgressBar_DIR_RIGHT:
-                (void)ST7735_FillRect((uint8_t)(bx + v), by, delta, bh, ST7735_GRAY);
+                (void)LCD_FillRect((uint8_t)(bx + v), by, delta, bh, LCD_GRAY);
                 break;
 
             case ProgressBar_DIR_LEFT:
-                (void)ST7735_FillRect((uint8_t)(spec->x0 - (prev - 1U)), by, delta, bh, ST7735_GRAY);
+                (void)LCD_FillRect((uint8_t)(spec->x0 - (prev - 1U)), by, delta, bh, LCD_GRAY);
                 break;
 
             case ProgressBar_DIR_UP:
             default:
-                (void)ST7735_FillRect(bx, (uint8_t)(spec->y0 - (prev - 1U)), bw, delta, ST7735_GRAY);
+                (void)LCD_FillRect(bx, (uint8_t)(spec->y0 - (prev - 1U)), bw, delta, LCD_GRAY);
                 break;
         }
     }
@@ -1158,12 +1157,12 @@ uint8_t ST7735_DrawProgressBar(uint8_t index, uint8_t value_pixels)
     return 0U;
 }
 
-void ST7735_SetBacklightTimeout(uint32_t timeout_ms)
+void LCD_SetBacklightTimeout(uint32_t timeout_ms)
 {
     s_backlightOffTick = HAL_GetTick() + timeout_ms;
 }
 
-void ST7735_SetBacklightLevel(uint8_t level_0_127)
+void LCD_SetBacklightLevel(uint8_t level_0_127)
 {
     if (level_0_127 > 127U)
     {
@@ -1173,12 +1172,12 @@ void ST7735_SetBacklightLevel(uint8_t level_0_127)
     s_backlightLevel = level_0_127;
 }
 
-uint8_t ST7735_GetQueueFill(void)
+uint8_t LCD_GetQueueFill(void)
 {
     return s_queueCount;
 }
 
-uint8_t ST7735_Process(void)
+uint8_t LCD_Process(void)
 {
     uint8_t done = 0U;
 

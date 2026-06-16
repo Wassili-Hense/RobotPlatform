@@ -1,5 +1,5 @@
-#ifndef ADC_INPUTS_H
-#define ADC_INPUTS_H
+#ifndef INPUTS_H_
+#define INPUTS_H_
 
 #include "main.h"
 #include <stdint.h>
@@ -15,8 +15,9 @@ extern volatile uint16_t ADC_X;
 extern volatile uint16_t ADC_Y;
 extern volatile uint16_t ADC_U;
 
-void AdcInputs_Init(void);
-void AdcInputs_Start(void);
-uint8_t ADC_isChanged(uint8_t channel);
+void Inp_Init(void);
+void Inp_AdcStart(void);
+uint8_t Inp_AdcisChanged(uint8_t channel);
+uint8_t Inp_DiGet(uint8_t ch);
 
-#endif // ADC_INPUTS_H
+#endif /* INPUTS_H_ */
