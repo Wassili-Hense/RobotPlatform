@@ -1,0 +1,53 @@
+﻿```text
+Master -> STM32
+Формат: [CMD][PARAMS...]
+Одна I2C-транзакция = одна команда.
+Все multi-byte параметры: Little Endian.
+```
+
+* `0x00` — `Tone(divider, delay_ms)` divider = 1000000/Hz
+  Формат: `[0x00][divider_lo][divider_hi][delay_lo][delay_hi]`
+
+* `0x10` — `LCD_SetBacklightTimeout(timeout_ms)`  
+  Формат: `[0x10][t0][t1][t2][t3]` (`uint32_t`)
+
+* `0x11` — `LCD_SetBacklightLevel(level)`  
+  Формат: `[0x11][level]` (`uint8_t`, `0..127`)
+
+* `0x12` — `LCD_Clear(color)`  
+  Формат: `[0x12][color_lo][color_hi]` (`RGB565`)
+
+* `0x13` — `LCD_FillRect(x, y, w, h, color)`  
+  Формат: `[0x13][x][y][w][h][color_lo][color_hi]`
+
+* `0x14` — `LCD_FillCircle(x, y, r, color)`  
+  Формат: `[0x14][x][y][r][color_lo][color_hi]`
+
+* `0x15` — `LCD_DrawText(x, y, text)`  
+  Формат: `[0x15][x][y][text...]`
+
+* `0x16` — `LCD_DrawProgressBar(index, value)`  
+  Формат: `[0x16][index(0..2)][value_pixels(0..69)]`  
+
+```text
+STM32 -> Master
+Формат ответа: 2 байта
+byte0 = (index << 4) | value[11:8]
+byte1 = value[7:0]
+index = byte0 >> 4
+value = ((byte0 & 0x0F) << 8) | byte1
+```
+Индексы ответа:
+0  STATUS     bit 0 - LCD busy, bit 1 - Usb connected
+1  ADC_X
+2  ADC_Y
+3  BUTTON_ON
+4  BUTTON_Fire
+5  BUTTON_UP
+6  BUTTON_DOWN
+7  BUTTON_BACK
+8  BUTTON_OK
+9  BUTTON_LUP
+10 BUTTON_LDN
+11 BUTTON_RUP
+12 BUTTON_RDN
