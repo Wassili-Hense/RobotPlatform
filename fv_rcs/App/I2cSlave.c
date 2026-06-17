@@ -12,11 +12,7 @@ static uint8_t s_rxIndex = 0U;
 
 static void I2cSlave_StartListen(void)
 {
-    if (s_hi2c == 0)
-    {
-        return;
-    }
-
+    if (s_hi2c == 0) return;
     HAL_I2C_EnableListen_IT(s_hi2c);
 }
 
@@ -37,10 +33,7 @@ void HAL_I2C_AddrCallback(I2C_HandleTypeDef *hi2c, uint8_t transferDirection, ui
 
     (void)addrMatchCode;
 
-    if (hi2c != s_hi2c)
-    {
-        return;
-    }
+    if (hi2c != s_hi2c) return;
 
     if (transferDirection == I2C_DIRECTION_TRANSMIT)
     {
@@ -62,35 +55,20 @@ void HAL_I2C_AddrCallback(I2C_HandleTypeDef *hi2c, uint8_t transferDirection, ui
 
 void HAL_I2C_ListenCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c != s_hi2c)
-    {
-        return;
-    }
-
-    if ((s_rxIndex > 0U) && (s_receiveCallback != 0))
-    {
-        s_receiveCallback(s_rxData, s_rxIndex);
-    }
-
+    if (hi2c != s_hi2c) return;
+    if ((s_rxIndex > 0U) && (s_receiveCallback != 0)) s_receiveCallback(s_rxData, s_rxIndex);
     s_rxIndex = 0U;
     I2cSlave_StartListen();
 }
 
 void HAL_I2C_SlaveTxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c != s_hi2c)
-    {
-        return;
-    }
+    if (hi2c != s_hi2c) return;
 }
 
 void HAL_I2C_SlaveRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c != s_hi2c)
-    {
-        return;
-    }
-
+    if (hi2c != s_hi2c) return;
     s_rxIndex++;
 
     if (s_rxIndex < I2C_SLAVE_RX_SIZE)
@@ -99,21 +77,14 @@ void HAL_I2C_SlaveRxCpltCallback(I2C_HandleTypeDef *hi2c)
     }
     else
     {
-        if (s_receiveCallback != 0)
-        {
-            s_receiveCallback(s_rxData, s_rxIndex);
-        }
+        if (s_receiveCallback != 0) s_receiveCallback(s_rxData, s_rxIndex);
         s_rxIndex = 0U;
     }
 }
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c != s_hi2c)
-    {
-        return;
-    }
-
+    if (hi2c != s_hi2c) return;
     s_rxIndex = 0U;
     I2cSlave_StartListen();
 }
