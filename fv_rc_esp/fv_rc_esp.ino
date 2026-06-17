@@ -1,3 +1,4 @@
+//ESP32-D0WD-V3 (revision v3.1)
 #include <esp_now.h>
 #include <WiFi.h>
 #include "Wire.h"
