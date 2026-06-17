@@ -412,16 +412,16 @@ static void App_ProcessAdc(void)
     }
     else
     {
+        if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U)
+        {
+            App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, ((ADC_U > 1000U) ? 2U : 0U) | s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD);
+        }
+
         if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U)
         {
             (void)LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));
         }
-        if (Inp_AdcisChanged(ADC_INPUT_CH_X) != 0U)
-        {
-            (void)LCD_DrawProgressBar(2U, ADC_X / 64U);
-        }
-
-        /*App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);*/
+        App_ProcessAnalogForI2c(ADC_INPUT_CH_X, ADC_X, APP_I2C_INDEX_ADC_X);
         App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, ADC_Y, APP_I2C_INDEX_ADC_Y);
     }
 }
