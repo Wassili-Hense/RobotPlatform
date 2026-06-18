@@ -344,7 +344,7 @@ static void App_ProcessAdc(void) {
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
     uint8_t usb_conn = ((ADC_U > 1000U) ? 2U : 0U);
     App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, usb_conn | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
-    s_indicatorValue[1] = usb_conn | (s_indicatorValue[1] & 2);
+    s_indicatorValue[1] = usb_conn | (s_indicatorValue[1] & 1);
     (void)App_DrawIndicator(1U);
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U) {
     (void) LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));

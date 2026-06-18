@@ -1,7 +1,6 @@
 
 #include <Wire.h>
 #include <Preferences.h>
-#include <math.h>
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
@@ -40,7 +39,6 @@ static constexpr uint8_t CMD_BACKLIGHT_TIMEOUT    = 0x03;
 static constexpr uint8_t CMD_BACKLIGHT_BRIGHTNESS = 0x04;
 static constexpr uint8_t CMD_TONE                 = 0x07;
 static constexpr uint8_t CMD_LCD_CLEAR            = 0x10;
-static constexpr uint8_t CMD_LCD_FILL_RECT        = 0x11;
 static constexpr uint8_t CMD_LCD_FILL_CIRCLE      = 0x12;
 static constexpr uint8_t CMD_LCD_DRAW_TEXT        = 0x13;
 static constexpr uint8_t CMD_LCD_INDICATOR        = 0x20;
@@ -1095,11 +1093,6 @@ static bool ApplyChangedItem(uint8_t index, uint16_t value)
   const uint16_t oldStatus = s_status;
   const bool shouldPrint = ShouldPrintPacket(index, oldStatus, value);
 
-  if ((index != IDX_STATUS) && IsUiActive())
-  {
-    TouchMenuActivity();
-  }
-
   switch (index)
   {
     case IDX_STATUS:
@@ -1140,11 +1133,24 @@ static bool ApplyChangedItem(uint8_t index, uint16_t value)
         const uint8_t btnIdx = (uint8_t)(index - IDX_BUTTON_0);
         const uint8_t oldPressed = s_buttons[btnIdx];
         const uint8_t newPressed = (value != 0U) ? 1U : 0U;
-        s_buttons[btnIdx] = newPressed;
 
-        if ((oldPressed == 0U) && (newPressed != 0U))
+        if (oldPressed != newPressed)
         {
-          HandleButtonPressed(index);
+          if (IsUiActive())
+          {
+            TouchMenuActivity();
+          }
+
+          s_buttons[btnIdx] = newPressed;
+
+          if (newPressed != 0U)
+          {
+            HandleButtonPressed(index);
+          }
+        }
+        else
+        {
+          s_buttons[btnIdx] = newPressed;
         }
       }
       break;
