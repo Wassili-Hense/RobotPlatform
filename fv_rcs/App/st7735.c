@@ -15,7 +15,7 @@
 #define ST7735_IO_BUFFER_SIZE      (ST7735_TEXT_CELL_WIDTH * FONT_7X10_HEIGHT * 2U)
 #define ST7735_COLOR_CHUNK_PIXELS  (ST7735_IO_BUFFER_SIZE / 2U)
 #define ProgressBar_PB_LEN   70U
-#define ProgressBar_PB_TH     4U
+#define ProgressBar_PB_TH     3U
 #define ProgressBar_RED_LIMIT    3U
 #define ProgressBar_RANGE       64U
 #define ProgressBar_GREEN_LIMIT (ProgressBar_RED_LIMIT + ProgressBar_RANGE)
@@ -793,6 +793,17 @@ uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char *text, uint16_t color, uin
   cmd.data.drawText.text[i] = '\0';
   return ST7735_QueuePush(&cmd);
 }
+
+uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value) {
+  if (index == 0U) {
+    return LCD_FillRect(0, 0, ProgressBar_PB_TH, ProgressBar_PB_TH, value ? LCD_BLUE : LCD_GRAY);
+  } else if (index == 1U) {
+    uint16_t color = (value == 3U) ? LCD_BLUE : ((value == 0U) ? LCD_GRAY : LCD_ORANGE);
+    return LCD_FillRect((uint8_t) (LCD_WIDTH - ProgressBar_PB_TH - 1U), 0, ProgressBar_PB_TH, ProgressBar_PB_TH, color);
+  }
+  return 0;
+}
+
 
 uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value_pixels) {
   const ProgressBar_Spec *spec;

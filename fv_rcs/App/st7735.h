@@ -52,7 +52,8 @@ uint8_t LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color)
 uint8_t LCD_FillCircle(uint8_t x0, uint8_t y0, uint8_t r, uint16_t color);
 uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, uint16_t bgColor);
 
-
+/* index: 0 - left, 1 - right, value_pixels: 0..3 */
+uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value);
 /* index: 0 - left vertical, 1 - top left, 2 - top right, 3 - right vertical
  *  value_pixels: 0..70 */
 uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value_pixels);

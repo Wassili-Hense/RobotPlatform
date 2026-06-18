@@ -95,17 +95,10 @@ static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index, uint16
   return adcChanged;
 }
 
-static uint8_t App_DrawIndicator(uint8_t index) {
-  if (index == 0U) {
-    return LCD_FillCircle(4U, 4U, 4U, s_indicatorValue[0] ? LCD_BLUE : LCD_GRAY);
-  } else if (index == 1U) {
-    uint8_t indicatorState = (s_indicatorValue[1] ? 1U : 0U) | ((ADC_U > 1000U) ? 2U : 0U);
-    uint16_t color = (indicatorState == 3U) ? LCD_BLUE : ((indicatorState == 0U) ? LCD_GRAY : LCD_ORANGE);
-    return LCD_FillCircle((uint8_t) (LCD_WIDTH - 5U), 4U, 4U, color);
-  }
-  return 0;
+static uint8_t App_DrawIndicator(uint8_t index){
+  if(index > 1) return 2;
+  return LCD_DrawIndicator(index, s_indicatorValue[index]);
 }
-
 static void App_LcdQueueCallback(uint8_t value) {
   uint16_t status = s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFE;
 
@@ -196,7 +189,7 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
 
   case APP_RX_CMD_LCD_DRAW_INDICATOR:
     if ((size >= 3U) && (data[1] <= 1U)) {
-      s_indicatorValue[data[1]] = data[2];
+      s_indicatorValue[data[1]] = (data[1]==1?(s_indicatorValue[data[1]] & 2):0) | (data[2]?1U:0U);
       (void)App_DrawIndicator(data[1]);
     }
     break;
@@ -240,7 +233,7 @@ void Tone(uint16_t divider, uint16_t delay_ms) {
   if (divider == 0U) return;
 
   __HAL_TIM_SET_AUTORELOAD(&htim1, divider);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, divider / 4U);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, divider / 16U);
   __HAL_TIM_SET_COUNTER(&htim1, 0U);
   HAL_TIM_GenerateEvent(&htim1, TIM_EVENTSOURCE_UPDATE);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -349,7 +342,9 @@ static void App_ProcessAdc(void) {
   } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, APP_I2C_INDEX_ADC_Y, ADC_Y)) {
 
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
-    App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, ((ADC_U > 1000U) ? 2U : 0U) | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
+    uint8_t usb_conn = ((ADC_U > 1000U) ? 2U : 0U);
+    App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, usb_conn | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
+    s_indicatorValue[1] = usb_conn | (s_indicatorValue[1] & 2);
     (void)App_DrawIndicator(1U);
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U) {
     (void) LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));
