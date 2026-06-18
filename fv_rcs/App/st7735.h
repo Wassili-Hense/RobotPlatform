@@ -13,14 +13,14 @@ extern "C" {
 
 /* RGB565 colors */
 #define LCD_BLACK   0x0000U
+#define LCD_GRAY    0x4208U
 #define LCD_WHITE   0xFFFFU
 #define LCD_RED     0xF800U
-#define LCD_GREEN   0x07E0U
-#define LCD_BLUE    0x001FU
 #define LCD_YELLOW  0xFFE0U
+#define LCD_GREEN   0x07E0U
 #define LCD_CYAN    0x07FFU
+#define LCD_BLUE    0x001FU
 #define LCD_MAGENTA 0xF81FU
-#define LCD_GRAY    0x4208U
 
 /* Queue level callback:
  * 1 -> after push only 4 free slots left

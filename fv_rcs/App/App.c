@@ -37,14 +37,14 @@ enum {
 };
 
 enum {
-  APP_RX_CMD_TONE = 0x00,
-  APP_RX_CMD_LCD_SET_BL_TIMEOUT = 0x10,
-  APP_RX_CMD_LCD_SET_BL_LEVEL = 0x11,
-  APP_RX_CMD_LCD_CLEAR = 0x12,
-  APP_RX_CMD_LCD_FILL_RECT = 0x13,
-  APP_RX_CMD_LCD_FILL_CIRCLE = 0x14,
-  APP_RX_CMD_LCD_DRAW_TEXT = 0x15,
-  APP_RX_CMD_LCD_DRAW_PROGRESS_BAR = 0x16
+  APP_RX_CMD_LCD_SET_BL_TIMEOUT = 0x03,
+  APP_RX_CMD_LCD_SET_BL_LEVEL = 0x04,
+  APP_RX_CMD_TONE = 0x07,
+  APP_RX_CMD_LCD_CLEAR = 0x10,
+  APP_RX_CMD_LCD_FILL_RECT = 0x11,
+  APP_RX_CMD_LCD_FILL_CIRCLE = 0x12,
+  APP_RX_CMD_LCD_DRAW_TEXT = 0x13,
+  APP_RX_CMD_LCD_DRAW_PROGRESS_BAR = 0x21
 };
 
 /* -------------------------------------------------------------------------- */
@@ -204,7 +204,8 @@ static void App_ResetI2cState(void) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tone                                                                       */
+/* Tone
+ * divider = 1000000 / Freq                                       */
 /* -------------------------------------------------------------------------- */
 void Tone(uint16_t divider, uint16_t delay_ms) {
   if (htim1.State == HAL_TIM_STATE_RESET) return;
