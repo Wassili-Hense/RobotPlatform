@@ -44,6 +44,7 @@ enum {
   APP_RX_CMD_LCD_FILL_RECT = 0x11,
   APP_RX_CMD_LCD_FILL_CIRCLE = 0x12,
   APP_RX_CMD_LCD_DRAW_TEXT = 0x13,
+  APP_RX_CMD_LCD_DRAW_INDICATOR = 0x20,
   APP_RX_CMD_LCD_DRAW_PROGRESS_BAR = 0x21
 };
 
@@ -62,6 +63,7 @@ static volatile uint8_t s_toneBusy = 0U;
 static volatile uint32_t s_toneStopTick = 0U;
 static uint32_t s_lastAppTick = 0U;
 static uint32_t s_adcStartTick = 0U;
+static uint8_t s_indicatorValue[2] = { 0U, 0U };
 
 /* -------------------------------------------------------------------------- */
 /* I2C callbacks and data preparation                                         */
@@ -91,6 +93,17 @@ static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index, uint16
   if ((int32_t) (HAL_GetTick() - s_i2cTick[index]) >= 0) s_i2cDirty[index] = 1U;
 
   return adcChanged;
+}
+
+static uint8_t App_DrawIndicator(uint8_t index) {
+  if (index == 0U) {
+    return LCD_FillCircle(4U, 4U, 4U, s_indicatorValue[0] ? LCD_BLUE : LCD_GRAY);
+  } else if (index == 1U) {
+    uint8_t indicatorState = (s_indicatorValue[1] ? 1U : 0U) | ((ADC_U > 1000U) ? 2U : 0U);
+    uint16_t color = (indicatorState == 3U) ? LCD_BLUE : ((indicatorState == 0U) ? LCD_GRAY : LCD_ORANGE);
+    return LCD_FillCircle((uint8_t) (LCD_WIDTH - 5U), 4U, 4U, color);
+  }
+  return 0;
 }
 
 static void App_LcdQueueCallback(uint8_t value) {
@@ -181,6 +194,12 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
     }
     break;
 
+  case APP_RX_CMD_LCD_DRAW_INDICATOR:
+    if ((size >= 3U) && (data[1] <= 1U)) {
+      s_indicatorValue[data[1]] = data[2];
+      (void)App_DrawIndicator(data[1]);
+    }
+    break;
   case APP_RX_CMD_LCD_DRAW_PROGRESS_BAR:
     if ((size >= 3U) && (data[1] <= 2U)) {
       (void) LCD_DrawProgressBar(data[1], data[2]);
@@ -221,7 +240,7 @@ void Tone(uint16_t divider, uint16_t delay_ms) {
   if (divider == 0U) return;
 
   __HAL_TIM_SET_AUTORELOAD(&htim1, divider);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, divider / 2U);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, divider / 4U);
   __HAL_TIM_SET_COUNTER(&htim1, 0U);
   HAL_TIM_GenerateEvent(&htim1, TIM_EVENTSOURCE_UPDATE);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -331,6 +350,7 @@ static void App_ProcessAdc(void) {
 
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
     App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, ((ADC_U > 1000U) ? 2U : 0U) | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
+    (void)App_DrawIndicator(1U);
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U) {
     (void) LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));
   }
@@ -347,6 +367,8 @@ void App_Init(void) {
   Inp_Init();
   I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
   LCD_Init(App_LcdQueueCallback);
+  (void)App_DrawIndicator(0U);
+  (void)App_DrawIndicator(1U);
   Inp_AdcStart();
 
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET); /* Power ON latch */

@@ -123,8 +123,7 @@ static const ProgressBar_Spec s_progressBars[4] =
     { .x0 = (uint8_t) (LCD_WIDTH - 1U - ProgressBar_PB_TH), .y0 = LCD_HEIGHT - 1U, .dir = ProgressBar_DIR_UP }
   };
 static uint8_t s_progressBarInitMask = 0U;
-static uint8_t s_progressBarPrev[4] =
-  { 0U, 0U, 0U, 0U };
+static uint8_t s_progressBarPrev[4] = { 0U, 0U, 0U, 0U };
 
 static void ST7735_Select(void) {
   HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_RESET);
@@ -553,7 +552,7 @@ static uint8_t ST7735_ProcessFillCircleStep(void) {
   if (s_active.state.circle.firstStepDone == 0U) {
     s_active.state.circle.firstStepDone = 1U;
     ST7735_CircleResetSegments();
-    ST7735_CircleAddSegment(c->x0, (int16_t) c->y0 - c->r, (int16_t) (2 * c->r + 1));
+    ST7735_CircleAddSegment(c->x0, (int16_t)c->y0 - c->r, (int16_t)(2 * c->r + 1));
     if (s_active.state.circle.segCount == 0U) return 0U;
     if (ST7735_CircleStartCurrentSegment(c->color)) {
       s_active.state.circle.segIndex++;
@@ -565,7 +564,6 @@ static uint8_t ST7735_ProcessFillCircleStep(void) {
   x = s_active.state.circle.x;
   y = s_active.state.circle.y;
   d = s_active.state.circle.d;
-  if (x >= y) return 1U;
   if (d < 0) {
     d += 2 * x + 3;
   } else {
@@ -577,17 +575,24 @@ static uint8_t ST7735_ProcessFillCircleStep(void) {
   s_active.state.circle.x = x;
   s_active.state.circle.y = y;
   s_active.state.circle.d = d;
+
+  if (x > y) return 1U;
+
   ST7735_CircleResetSegments();
-  ST7735_CircleAddSegment((int16_t) c->x0 + x, (int16_t) c->y0 - y, (int16_t) (2 * y + 1));
-  ST7735_CircleAddSegment((int16_t) c->x0 - x, (int16_t) c->y0 - y, (int16_t) (2 * y + 1));
-  ST7735_CircleAddSegment((int16_t) c->x0 + y, (int16_t) c->y0 - x, (int16_t) (2 * x + 1));
-  ST7735_CircleAddSegment((int16_t) c->x0 - y, (int16_t) c->y0 - x, (int16_t) (2 * x + 1));
+  if (x == y) {
+    ST7735_CircleAddSegment((int16_t)c->x0 + x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 - x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+  } else {
+    ST7735_CircleAddSegment((int16_t)c->x0 + x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 - x, (int16_t)c->y0 - y, (int16_t)(2 * y + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 + y, (int16_t)c->y0 - x, (int16_t)(2 * x + 1));
+    ST7735_CircleAddSegment((int16_t)c->x0 - y, (int16_t)c->y0 - x, (int16_t)(2 * x + 1));
+  }
   if (s_active.state.circle.segCount == 0U) return 0U;
   if (ST7735_CircleStartCurrentSegment(c->color)) {
     s_active.state.circle.segIndex++;
     if (s_active.state.circle.segIndex >= s_active.state.circle.segCount) ST7735_CircleResetSegments();
   }
-
   return 0U;
 }
 

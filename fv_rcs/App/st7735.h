@@ -16,6 +16,7 @@ extern "C" {
 #define LCD_GRAY    0x4208U
 #define LCD_WHITE   0xFFFFU
 #define LCD_RED     0xF800U
+#define LCD_ORANGE  0xFD20U
 #define LCD_YELLOW  0xFFE0U
 #define LCD_GREEN   0x07E0U
 #define LCD_CYAN    0x07FFU
