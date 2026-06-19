@@ -23,9 +23,10 @@ extern "C" {
 #define LCD_BLUE    0x001FU
 #define LCD_MAGENTA 0xF81FU
 
-/* Queue level callback:
- * 1 -> after push only 4 free slots left
- * 0 -> after pop 5 free slots available or queue reset
+/* Queue/status callback value bits:
+ * bit0 = 1 -> after push only 2 free slots left
+ * bit0 = 0 -> after pop 3 free slots available or queue reset
+ * bit3 = current backlight status (1 = on, 0 = off)
  */
 typedef void (*LCD_QueueCallback)(uint8_t value);
 
@@ -34,11 +35,12 @@ void LCD_Init(LCD_QueueCallback cb);
 /*
  * Возвращает 1, если есть незавершённая команда и можно сразу вызвать LCD_Process().
  * Если DMA ещё занята, возвращает 0.
- */uint8_t LCD_Process(void);
+ */
+uint8_t LCD_Process(void);
 
 void LCD_SetBacklightTimeout(uint32_t timeout_ms);
 void LCD_SetBacklightLevel(uint8_t level_0_127);
-
+void LCD_SetBackgroundColor(uint16_t color);
 
 /*
  * Команды ставятся в очередь и сразу возвращают управление.
@@ -49,13 +51,15 @@ void LCD_SetBacklightLevel(uint8_t level_0_127);
 /* Сбрасывает очередь и очищает только центральную область, не затрагивая Progress Bars. */
 uint8_t LCD_Clear(uint16_t color);
 uint8_t LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
-uint8_t LCD_FillCircle(uint8_t x0, uint8_t y0, uint8_t r, uint16_t color);
-uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char* text, uint16_t color, uint16_t bgColor);
+uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char *text, uint16_t color);
+/* x,y - центр маркера; idx - индекс маркера */
+uint8_t LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color);
 
 /* index: 0 - left, 1 - right, value_pixels: 0..3 */
 uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value);
+
 /* index: 0 - left vertical, 1 - top left, 2 - top right, 3 - right vertical
- *  value_pixels: 0..70 */
+ * value_pixels: 0..70 */
 uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value_pixels);
 
 #ifdef __cplusplus

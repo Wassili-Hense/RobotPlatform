@@ -1,7 +1,7 @@
 #include "I2cSlave.h"
 
 #define I2C_SLAVE_RX_SIZE  32U
-#define I2C_SLAVE_TX_SIZE   2U
+#define I2C_SLAVE_TX_SIZE  32U
 
 static I2C_HandleTypeDef *s_hi2c = 0;
 static I2cSlave_RequestCallback_t s_requestCallback = 0;

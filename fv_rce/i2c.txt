@@ -1,18 +1,31 @@
 ﻿I2C protocol
-
 Slave address: 0x14
 
 -----------------------------
-Read from slave (2 bytes)
+Read from slave (packet)
 -----------------------------
-Slave returns one changed item per request.
+Slave returns one fixed-size packet of 26 bytes on every read transaction.
+
+Valid payload length:
+  valid_len = 2 + 2 * (item_count - 1)
+
+Bytes after valid_len and up to 26 bytes are unspecified.
+Master must ignore them.
+They are not additional items.
 
 Byte0:
-  bits [7:4] - item index
-  bits [3:0] - value[11:8]
+  bits [7:4] - 0 (APP_I2C_INDEX_STATUS)
+  bits [3:0] - item_count (number of items in packet, including STATUS)
 
 Byte1:
-  bits [7:0] - value[7:0]
+  bits [7:0] - STATUS[7:0]
+
+Next items (each = 2 bytes):
+  ByteN:
+    bits [7:4] - item index
+    bits [3:0] - value[11:8]
+  ByteN+1:
+    bits [7:0] - value[7:0]
 
 value is 12-bit unsigned.
 
@@ -36,35 +49,51 @@ STATUS bits:
          1 = master must stop sending LCD commands
          0 = master may send LCD commands
   bit1 - Usb connected
+  bit3 - LCD backlight state (1 = on, 0 = off)
 
 -----------------------------
 Write to slave
 -----------------------------
-One command per I2C write transaction. Multibyte parameters are little-endian.
+One command per I2C write transaction. maxLength = 32
+Multibyte parameters are little-endian.
 
- — BacklightTimeout(uint32 timeout_ms)
+— BacklightTimeout(uint32 timeout_ms)
   format: [0x03][t0][t1][t2][t3]
 
- — BacklightBrightness(level) level: 0..127  
+— BacklightBrightness(level) level: 0..127
   format: [0x04][level]
 
- — Tone(divider, delay_ms) divider = 1000000/Hz
+— Tone(divider, delay_ms) divider = 1000000 / Hz
   format: [0x07][divider_lo][divider_hi][delay_lo][delay_hi]
 
- — LCD_Clear(color) color: RGB565
+— LCD_Clear(color) color: RGB565
   format: [0x10][color_lo][color_hi]
 
- — LCD_FillRect(x, y, w, h, color)
+— LCD_FillRect(x, y, w, h, color)
   format: [0x11][x][y][w][h][color_lo][color_hi]
 
- — LCD_FillCircle(x, y, r, color)
-  format: [0x12][x][y][r][color_lo][color_hi]
+— LCD_DrawMarker(x, y, idx, color)
+  x,y   - marker center
+  idx   - marker index (size is taken from internal table)
+  format: [0x12][x][y][idx][color_lo][color_hi]
 
- — LCD_DrawText(x, y, text)
+— LCD_DrawText(x, y, text)
+  text must be zero-terminated, max length 21
+  background color is global (see LCD_SetBackgroundColor)
   format: [0x13][x][y][text...][0]
 
- — LCD_Indicator(index, state) index: [0 - Command, 1 - USB], state: [0 - off, 1 - on]
+— LCD_SetBackgroundColor(color) color: RGB565
+  format: [0x14][color_lo][color_hi]
+
+— LCD_Indicator(index, state)
+index: [0 - RF, 1 - USB], 
+state: [0 - off, 1 - on]
   format: [0x20][index][state]
 
- — LCD_DrawProgressBar(index, value) indexes: [0 - left vertical, 1 - top left, 2 - top right], value: 0..70
+— LCD_DrawProgressBar(index, value)
+  index:
+    0 - left vertical
+    1 - top left
+    2 - top right
+  value: 0..70
   format: [0x21][index][value]
