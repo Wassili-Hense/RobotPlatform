@@ -1,33 +1,8 @@
-
 #include <Arduino.h>
-#include <Wire.h>
 #include <Preferences.h>
+#include "hmi.h"
 
-static constexpr uint8_t I2C_ADDR = 0x14;
-static constexpr int I2C_SDA = 21;
-static constexpr int I2C_SCL = 22;
-static constexpr uint32_t I2C_POLL_MS = 5;
-static constexpr uint8_t I2C_READ_LEN = 8;
-static constexpr uint8_t I2C_ITEM_COUNT_MAX = 4;
-
-static constexpr uint8_t APP_I2C_INDEX_STATUS       = 0;
-static constexpr uint8_t APP_I2C_INDEX_ADC_X        = 1;
-static constexpr uint8_t APP_I2C_INDEX_ADC_Y        = 2;
-static constexpr uint8_t APP_I2C_INDEX_BUTTONS      = 3;
-static constexpr uint8_t APP_BUTTON_ON              = 0;
-static constexpr uint8_t APP_BUTTON_FIRE            = 1;
-static constexpr uint8_t APP_BUTTON_UP              = 2;
-static constexpr uint8_t APP_BUTTON_DOWN            = 3;
-static constexpr uint8_t APP_BUTTON_BACK            = 4;
-static constexpr uint8_t APP_BUTTON_OK              = 5;
-static constexpr uint8_t APP_BUTTON_LUP             = 6;
-static constexpr uint8_t APP_BUTTON_LDN             = 7;
-static constexpr uint8_t APP_BUTTON_RUP             = 8;
-static constexpr uint8_t APP_BUTTON_RDN             = 9;
-
-static constexpr uint8_t STATUS_BIT_LCD_BUSY      = 0;
-static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 1;
-static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON  = 3;
+static constexpr uint32_t HMI_POLL_MS = 5;
 
 static constexpr uint16_t COLOR_BLACK  = 0x0000;
 static constexpr uint16_t COLOR_WHITE  = 0xFFFF;
@@ -41,37 +16,9 @@ static constexpr int JOY_AREA_Y0 = 10;
 static constexpr int JOY_AREA_X1 = 114;
 static constexpr int JOY_AREA_Y1 = 79;
 
-static constexpr uint8_t CMD_BACKLIGHT_TIMEOUT    = 0x03;
-static constexpr uint8_t CMD_BACKLIGHT_BRIGHTNESS = 0x04;
-static constexpr uint8_t CMD_TONE                 = 0x07;
-static constexpr uint8_t CMD_LCD_CLEAR            = 0x10;
-static constexpr uint8_t CMD_LCD_DRAW_MARKER      = 0x12;
-static constexpr uint8_t CMD_LCD_DRAW_TEXT        = 0x13;
-static constexpr uint8_t CMD_LCD_SET_BG           = 0x14;
-static constexpr uint8_t CMD_LCD_INDICATOR        = 0x20;
-static constexpr uint8_t CMD_LCD_PROGRESS         = 0x21;
-
-static constexpr uint8_t PRIO_LOW  = 0;
-static constexpr uint8_t PRIO_MED  = 1;
-static constexpr uint8_t PRIO_HIGH = 2;
-
 static constexpr uint32_t MENU_INACTIVITY_MS = 60000UL;
 static constexpr uint32_t MENU_TIMEOUT_REFRESH_MS = 10000UL;
 static constexpr uint32_t MENU_TIMEOUT_VALUE_MS = 15000UL;
-
-static constexpr size_t CMD_MAX_LEN = 32;
-static constexpr size_t CMD_QUEUE_CAPACITY = 56;
-
-struct CmdItem
-{
-  bool used = false;
-  uint8_t data[CMD_MAX_LEN]{};
-  uint8_t len = 0;
-  uint8_t prio = PRIO_MED;
-  bool isLcd = false;
-  bool requiresLcdReady = false;
-  uint32_t seq = 0;
-};
 
 struct MarkerState
 {
@@ -83,9 +30,20 @@ struct MarkerState
 struct AxisCal
 {
   uint16_t min = 0;
-  uint16_t cMin = 1942;
-  uint16_t cMax = 1971;
+  uint16_t cMin = 1955;
+  uint16_t cMax = 1956;
   uint16_t max = 4095;
+};
+
+struct ButtonEvents
+{
+  bool anyChange = false;
+  bool okRise = false;
+  bool backRise = false;
+  bool upRise = false;
+  bool downRise = false;
+  bool lupRise = false;
+  bool ldnRise = false;
 };
 
 enum UiMode : uint8_t
@@ -105,47 +63,30 @@ enum MenuItem : uint8_t
 
 static Preferences s_prefs;
 static bool s_prefsOpened = false;
-static bool s_initialBrightnessQueued = false;
-
-static CmdItem s_cmdQueue[CMD_QUEUE_CAPACITY];
-static uint32_t s_cmdSeq = 1;
-
 static uint32_t s_nextPollMs = 0;
 static uint32_t s_lastMenuActivityMs = 0;
 static uint32_t s_lastMenuTimeoutRefreshMs = 0;
 static String s_serialLine;
 
-static uint8_t s_status = 0;
-static uint8_t s_lastLen1StatusPrinted = 0xFF;
-static bool s_usbKnown = false;
 static bool s_usbConnected = false;
-static bool s_backlightOn = false;
-static bool s_lcdSendAllowed = false;
-static uint32_t s_rxSeq = 0;
-static uint32_t s_lastTxRxSeq = 0;
-
-static uint16_t s_rawX = 1957;
-static uint16_t s_rawY = 1957;
-static bool s_haveRawX = false;
-static bool s_haveRawY = false;
-static bool s_buttons[10] = { false };
+static bool s_hmiDataValid = false;
+static bool s_debugSerialForced = false;
 
 static MarkerState s_markerCurrent;
 static int s_markerTargetX = -1;
 static int s_markerTargetY = -1;
 static bool s_markerTargetVisible = false;
 static bool s_skipMarkerUpdateOnce = false;
+
 static UiMode s_uiMode = UI_NORMAL;
 static uint8_t s_menuIndex = MENU_CAL_CENTER;
 static uint8_t s_brightnessStep = 7;
-
-static AxisCal s_calX{177, 1942, 1971, 4025};
-static AxisCal s_calY{0, 1942, 1971, 4027};
+static AxisCal s_calX{177, 1955, 1956, 4025};
+static AxisCal s_calY{0, 1958, 1959, 4027};
 static AxisCal s_tmpCalX;
 static AxisCal s_tmpCalY;
 static int s_calMarkerLastX = -1;
 static int s_calMarkerLastY = -1;
-static uint32_t s_calStaticSeqBarrier = 0;
 
 static const char* kButtonNames[10] = {
   "ON", "Fire", "UP", "DOWN", "BACK", "OK", "LUP", "LDN", "RUP", "RDN"
@@ -153,23 +94,91 @@ static const char* kButtonNames[10] = {
 
 static const uint8_t kBrightnessLevels[11] = { 1, 2, 3, 5, 8, 13, 20, 32, 50, 79, 127 };
 
-static bool SerialEnabled()
+static bool SerialEnabled(void)
 {
-  return s_usbKnown && s_usbConnected;
+#ifdef DEBUG_I2C
+  return s_usbConnected || s_debugSerialForced;
+#else
+  return s_usbConnected;
+#endif
 }
 
-static uint8_t BrightnessLevel()
+static void DebugEnsureSerialOnError(void)
+{
+#ifdef DEBUG_I2C
+  if (!s_debugSerialForced)
+  {
+    Serial.begin(115200);
+    delay(20);
+    s_debugSerialForced = true;
+  }
+#endif
+}
+
+static void DebugLogHmiErrors(hmi_tick_result_t err)
+{
+#ifdef DEBUG_I2C
+  if (err == HMI_TICK_OK)
+  {
+    return;
+  }
+  DebugEnsureSerialOnError();
+  if (!Serial)
+  {
+    return;
+  }
+  char line[160];
+  snprintf(line, sizeof(line),
+           "HMI err:%04X%s%s%s%s%s",
+           (unsigned)err,
+           (err & HMI_TICK_ERR_NOT_INITIALIZED) ? " NOT_INIT" : "",
+           (err & HMI_TICK_ERR_I2C_REQUEST) ? " I2C_REQ" : "",
+           (err & HMI_TICK_ERR_I2C_READ) ? " I2C_READ" : "",
+           (err & HMI_TICK_ERR_BAD_PACKET) ? " BAD_PKT" : "",
+           (err & HMI_TICK_ERR_TX) ? " TX" : "");
+  Serial.println(line);
+#else
+  (void)err;
+#endif
+}
+
+static uint8_t BrightnessLevel(void)
 {
   return kBrightnessLevels[s_brightnessStep];
 }
 
-static uint8_t DimmedBrightnessLevel()
+static uint8_t DimmedBrightnessLevel(void)
 {
   const uint8_t full = BrightnessLevel();
   return (uint8_t)max(1, (int)full / 2);
 }
 
-static void OpenPrefs()
+static bool ButtonPressed(hmi_data_idx_t idx)
+{
+  return hmi_get(idx) != 0U;
+}
+
+static uint16_t CurrentRawX(void)
+{
+  return hmi_get(HMI_DATA_JOY_X);
+}
+
+static uint16_t CurrentRawY(void)
+{
+  return hmi_get(HMI_DATA_JOY_Y);
+}
+
+static bool CurrentBacklightOn(void)
+{
+  return hmi_get(HMI_DATA_STAT_BL_ON) != 0U;
+}
+
+static bool CurrentJoyValid(void)
+{
+  return s_hmiDataValid;
+}
+
+static void OpenPrefs(void)
 {
   if (!s_prefsOpened)
   {
@@ -178,10 +187,9 @@ static void OpenPrefs()
   }
 }
 
-static void LoadPrefs()
+static void LoadPrefs(void)
 {
   OpenPrefs();
-
   s_brightnessStep = s_prefs.getUChar("bl_step", 7);
   if (s_brightnessStep > 10)
   {
@@ -189,23 +197,23 @@ static void LoadPrefs()
   }
 
   s_calX.min  = s_prefs.getUShort("x_min", 177);
-  s_calX.cMin = s_prefs.getUShort("x_cmin", 1942);
-  s_calX.cMax = s_prefs.getUShort("x_cmax", 1971);
+  s_calX.cMin = s_prefs.getUShort("x_cmin", 1955);
+  s_calX.cMax = s_prefs.getUShort("x_cmax", 1956);
   s_calX.max  = s_prefs.getUShort("x_max", 4025);
 
   s_calY.min  = s_prefs.getUShort("y_min", 0);
-  s_calY.cMin = s_prefs.getUShort("y_cmin", 1942);
-  s_calY.cMax = s_prefs.getUShort("y_cmax", 1971);
+  s_calY.cMin = s_prefs.getUShort("y_cmin", 1958);
+  s_calY.cMax = s_prefs.getUShort("y_cmax", 1959);
   s_calY.max  = s_prefs.getUShort("y_max", 4027);
 }
 
-static void SaveBrightnessPrefs()
+static void SaveBrightnessPrefs(void)
 {
   OpenPrefs();
   s_prefs.putUChar("bl_step", s_brightnessStep);
 }
 
-static void SaveCalibrationPrefs()
+static void SaveCalibrationPrefs(void)
 {
   OpenPrefs();
   s_prefs.putUShort("x_min",  s_calX.min);
@@ -243,20 +251,21 @@ static float MapAxisRawToNorm(uint16_t raw, const AxisCal& cal)
   {
     return 1.0f;
   }
+
   float t = (float)((int32_t)raw - (int32_t)cal.cMax) / (float)denom;
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
   return t;
 }
 
-static float GetNormX()
+static float GetNormX(void)
 {
-  return MapAxisRawToNorm(s_rawX, s_calX);
+  return MapAxisRawToNorm(CurrentRawX(), s_calX);
 }
 
-static float GetNormY()
+static float GetNormY(void)
 {
-  return -MapAxisRawToNorm(s_rawY, s_calY);
+  return -MapAxisRawToNorm(CurrentRawY(), s_calY);
 }
 
 static int NormToPixel(float v, int lo, int hi)
@@ -284,7 +293,7 @@ static int MapRawWindowToPixel(uint16_t raw, int center, int width, int px0, int
   {
     return px1;
   }
-  float t = (float)((int)raw - left) / (float)(right - left);
+  const float t = (float)((int)raw - left) / (float)(right - left);
   return px0 + (int)lroundf(t * (float)(px1 - px0));
 }
 
@@ -296,260 +305,31 @@ static int MapRawFullToPixel(uint16_t raw, int px0, int px1)
   return px0 + (int)lroundf(t * (float)(px1 - px0));
 }
 
-static const char* FirstPressedButtonName()
+static const char* FirstPressedButtonName(void)
 {
-  for (uint8_t i = 0U; i < 10U; ++i)
-  {
-    if (s_buttons[i])
-    {
-      return kButtonNames[i];
-    }
-  }
+  if (ButtonPressed(HMI_DATA_BTN_ON))   return kButtonNames[0];
+  if (ButtonPressed(HMI_DATA_BTN_FIRE)) return kButtonNames[1];
+  if (ButtonPressed(HMI_DATA_BTN_UP))   return kButtonNames[2];
+  if (ButtonPressed(HMI_DATA_BTN_DOWN)) return kButtonNames[3];
+  if (ButtonPressed(HMI_DATA_BTN_BACK)) return kButtonNames[4];
+  if (ButtonPressed(HMI_DATA_BTN_OK))   return kButtonNames[5];
+  if (ButtonPressed(HMI_DATA_BTN_LUP))  return kButtonNames[6];
+  if (ButtonPressed(HMI_DATA_BTN_LDN))  return kButtonNames[7];
+  if (ButtonPressed(HMI_DATA_BTN_RUP))  return kButtonNames[8];
+  if (ButtonPressed(HMI_DATA_BTN_RDN))  return kButtonNames[9];
   return "";
 }
 
-static bool QueueCommand(const uint8_t* data, uint8_t len, uint8_t prio, bool requiresLcdReady, bool isLcd)
-{
-  if (data == nullptr || len == 0 || len > CMD_MAX_LEN)
-  {
-    return false;
-  }
-
-  for (size_t i = 0; i < CMD_QUEUE_CAPACITY; ++i)
-  {
-    if (!s_cmdQueue[i].used)
-    {
-      s_cmdQueue[i].used = true;
-      memcpy(s_cmdQueue[i].data, data, len);
-      s_cmdQueue[i].len = len;
-      s_cmdQueue[i].prio = prio;
-      s_cmdQueue[i].requiresLcdReady = requiresLcdReady;
-      s_cmdQueue[i].isLcd = isLcd;
-      s_cmdQueue[i].seq = s_cmdSeq++;
-      return true;
-    }
-  }
-  return false;
-}
-
-static bool QueueBacklightTimeout(uint32_t timeoutMs)
-{
-  uint8_t data[5];
-  data[0] = CMD_BACKLIGHT_TIMEOUT;
-  data[1] = (uint8_t)(timeoutMs & 0xFF);
-  data[2] = (uint8_t)((timeoutMs >> 8) & 0xFF);
-  data[3] = (uint8_t)((timeoutMs >> 16) & 0xFF);
-  data[4] = (uint8_t)((timeoutMs >> 24) & 0xFF);
-  return QueueCommand(data, sizeof(data), PRIO_MED, false, false);
-}
-
-static bool QueueBacklightBrightness(uint8_t level)
-{
-  const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, level };
-  return QueueCommand(data, sizeof(data), PRIO_MED, false, false);
-}
-
-static bool QueueTone(uint16_t divider, uint16_t delayMs)
-{
-  uint8_t data[5];
-  data[0] = CMD_TONE;
-  data[1] = (uint8_t)(divider & 0xFF);
-  data[2] = (uint8_t)(divider >> 8);
-  data[3] = (uint8_t)(delayMs & 0xFF);
-  data[4] = (uint8_t)(delayMs >> 8);
-  return QueueCommand(data, sizeof(data), PRIO_HIGH, false, false);
-}
-
-static bool QueueLcdIndicator(uint8_t index, uint8_t state)
-{
-  const uint8_t data[3] = { CMD_LCD_INDICATOR, index, (uint8_t)(state ? 1 : 0) };
-  return QueueCommand(data, sizeof(data), PRIO_LOW, true, true);
-}
-
-static bool QueueLcdProgressBar(uint8_t index, uint8_t value)
-{
-  const uint8_t data[3] = { CMD_LCD_PROGRESS, index, value };
-  return QueueCommand(data, sizeof(data), PRIO_LOW, true, true);
-}
-
-static bool QueueLcdClear(uint16_t color)
-{
-  uint8_t data[3];
-  data[0] = CMD_LCD_CLEAR;
-  data[1] = (uint8_t)(color & 0xFF);
-  data[2] = (uint8_t)(color >> 8);
-  return QueueCommand(data, sizeof(data), PRIO_MED, true, true);
-}
-
-static bool QueueLcdSetBackgroundColor(uint16_t color)
-{
-  uint8_t data[3];
-  data[0] = CMD_LCD_SET_BG;
-  data[1] = (uint8_t)(color & 0xFF);
-  data[2] = (uint8_t)(color >> 8);
-  return QueueCommand(data, sizeof(data), PRIO_MED, true, true);
-}
-
-static bool QueueLcdDrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color)
-{
-  uint8_t data[6];
-  data[0] = CMD_LCD_DRAW_MARKER;
-  data[1] = x;
-  data[2] = y;
-  data[3] = idx;
-  data[4] = (uint8_t)(color & 0xFF);
-  data[5] = (uint8_t)(color >> 8);
-  return QueueCommand(data, sizeof(data), PRIO_HIGH, true, true);
-}
-
-static bool QueueLcdDrawText(uint8_t x, uint8_t y, const char* text, uint16_t color)
-{
-  if (text == nullptr)
-  {
-    return false;
-  }
-  const size_t textLen = strlen(text);
-  if (textLen > 26)
-  {
-    return false;
-  }
-
-  uint8_t data[32] = { 0 };
-  data[0] = CMD_LCD_DRAW_TEXT;
-  data[1] = x;
-  data[2] = y;
-  data[3] = (uint8_t)(color & 0xFF);
-  data[4] = (uint8_t)(color >> 8);
-  memcpy(&data[5], text, textLen);
-  data[5 + textLen] = 0;
-  return QueueCommand(data, (uint8_t)(6 + textLen), PRIO_MED, true, true);
-}
-
-static void LogTx(const uint8_t* data, uint8_t len)
+static void PrintPacketLine(void)
 {
 #ifdef DEBUG_I2C
   if (!SerialEnabled())
   {
     return;
   }
-
-  String line = "TX";
-  char tmp[8];
-  for (uint8_t i = 0; i < len; ++i)
-  {
-    snprintf(tmp, sizeof(tmp), " %02X", data[i]);
-    line += tmp;
-  }
-  Serial.println(line);
-#else
-  (void)data;
-  (void)len;
-#endif
-}
-
-static bool QueueHasPendingBefore(uint32_t barrierSeq)
-{
-  if (barrierSeq == 0U)
-  {
-    return false;
-  }
-
-  for (size_t i = 0; i < CMD_QUEUE_CAPACITY; ++i)
-  {
-    if (s_cmdQueue[i].used && s_cmdQueue[i].seq < barrierSeq)
-    {
-      return true;
-    }
-  }
-  return false;
-}
-
-static int FindBestQueuedCommand()
-{
-  int bestIndex = -1;
-  uint8_t bestPrio = 0;
-  uint32_t bestSeq = 0xFFFFFFFFu;
-
-  for (size_t i = 0; i < CMD_QUEUE_CAPACITY; ++i)
-  {
-    const CmdItem& item = s_cmdQueue[i];
-    if (!item.used)
-    {
-      continue;
-    }
-    if (item.requiresLcdReady && !s_lcdSendAllowed)
-    {
-      continue;
-    }
-    if (bestIndex < 0 || item.prio > bestPrio || (item.prio == bestPrio && item.seq < bestSeq))
-    {
-      bestIndex = (int)i;
-      bestPrio = item.prio;
-      bestSeq = item.seq;
-    }
-  }
-
-  return bestIndex;
-}
-
-static bool SendOneQueuedCommand()
-{
-  const int index = FindBestQueuedCommand();
-  if (index < 0)
-  {
-    return false;
-  }
-
-  const CmdItem item = s_cmdQueue[index];
-  Wire.beginTransmission(I2C_ADDR);
-  const size_t written = Wire.write(item.data, item.len);
-  const uint8_t rc = Wire.endTransmission(true);
-  if (rc != 0 || written != item.len)
-  {
-    return false;
-  }
-
-  if (item.isLcd)
-  {
-    s_lcdSendAllowed = false;
-  }
-
-  LogTx(item.data, item.len);
-  s_cmdQueue[index].used = false;
-  return true;
-}
-
-static void PrintPacketLine(uint8_t itemCount)
-{
-#ifdef DEBUG_I2C
-  if (!SerialEnabled())
-  {
-    return;
-  }
-
-  if (itemCount == 1U)
-  {
-    if (s_status == s_lastLen1StatusPrinted)
-    {
-      return;
-    }
-    s_lastLen1StatusPrinted = s_status;
-  }
-
   char line[96];
-  snprintf(
-    line,
-    sizeof(line),
-    "%2u %02x %.3f %.3f %s",
-    itemCount,
-    s_status,
-    GetNormX(),
-    GetNormY(),
-    FirstPressedButtonName()
-  );
+  snprintf(line, sizeof(line), "%.3f %.3f %s", GetNormX(), GetNormY(), FirstPressedButtonName());
   Serial.println(line);
-#else
-  (void)itemCount;
 #endif
 }
 
@@ -569,18 +349,14 @@ static void PrintCalibrationState(const char* tag)
 
 static void HandleUsbState(bool usbConnected)
 {
-  if (!s_usbKnown)
+#ifdef DEBUG_I2C
+  if (s_debugSerialForced)
   {
-    s_usbKnown = true;
     s_usbConnected = usbConnected;
-    if (usbConnected)
-    {
-      Serial.begin(115200);
-      delay(20);
-      QueueLcdIndicator(1, 1);
-    }
+    hmi_cmd_lcd_set_indicator(1, usbConnected);
     return;
   }
+#endif
 
   if (s_usbConnected == usbConnected)
   {
@@ -589,16 +365,19 @@ static void HandleUsbState(bool usbConnected)
 
   if (!usbConnected)
   {
-    Serial.end();
+    if (s_usbConnected)
+    {
+      Serial.end();
+    }
     s_usbConnected = false;
-    QueueLcdIndicator(1, 0);
+    hmi_cmd_lcd_set_indicator(1, false);
   }
   else
   {
     s_usbConnected = true;
     Serial.begin(115200);
     delay(20);
-    QueueLcdIndicator(1, 1);
+    hmi_cmd_lcd_set_indicator(1, true);
   }
 }
 
@@ -616,19 +395,19 @@ static const char* MenuItemText(uint8_t idx, bool selected)
   return selected ? "> Cal edge" : "  Cal edge";
 }
 
-static void QueueBrightnessField()
+static void QueueBrightnessField(void)
 {
   char line[22];
   snprintf(line, sizeof(line), "Brightness %3u   ", BrightnessLevel());
-  QueueLcdDrawText(10, 56, line, COLOR_CYAN);
+  hmi_cmd_lcd_draw_text(10, 56, COLOR_CYAN, line);
 }
 
-static void QueueMenuFrame()
+static void QueueMenuFrame(void)
 {
-  QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "MENU", COLOR_YELLOW);
-  QueueLcdDrawText(10, MenuItemY(MENU_CAL_CENTER), MenuItemText(MENU_CAL_CENTER, s_menuIndex == MENU_CAL_CENTER), s_menuIndex == MENU_CAL_CENTER ? COLOR_GREEN : COLOR_WHITE);
-  QueueLcdDrawText(10, MenuItemY(MENU_CAL_EDGE), MenuItemText(MENU_CAL_EDGE, s_menuIndex == MENU_CAL_EDGE), s_menuIndex == MENU_CAL_EDGE ? COLOR_GREEN : COLOR_WHITE);
+  hmi_cmd_lcd_clear(COLOR_BLACK);
+  hmi_cmd_lcd_draw_text(10, 10, COLOR_YELLOW, "MENU");
+  hmi_cmd_lcd_draw_text(10, MenuItemY(MENU_CAL_CENTER), s_menuIndex == MENU_CAL_CENTER ? COLOR_GREEN : COLOR_WHITE, MenuItemText(MENU_CAL_CENTER, s_menuIndex == MENU_CAL_CENTER));
+  hmi_cmd_lcd_draw_text(10, MenuItemY(MENU_CAL_EDGE), s_menuIndex == MENU_CAL_EDGE ? COLOR_GREEN : COLOR_WHITE, MenuItemText(MENU_CAL_EDGE, s_menuIndex == MENU_CAL_EDGE));
   QueueBrightnessField();
 }
 
@@ -638,60 +417,55 @@ static void QueueMenuSelectionUpdate(uint8_t oldIndex, uint8_t newIndex)
   {
     return;
   }
-  QueueLcdDrawText(10, MenuItemY(oldIndex), MenuItemText(oldIndex, false), COLOR_WHITE);
-  QueueLcdDrawText(10, MenuItemY(newIndex), MenuItemText(newIndex, true), COLOR_GREEN);
+  hmi_cmd_lcd_draw_text(10, MenuItemY(oldIndex), COLOR_WHITE, MenuItemText(oldIndex, false));
+  hmi_cmd_lcd_draw_text(10, MenuItemY(newIndex), COLOR_GREEN, MenuItemText(newIndex, true));
 }
 
-static void QueueCalCenterStatic()
+static void QueueCalCenterStatic(void)
 {
-  QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl", COLOR_GREEN);
-  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt", COLOR_CYAN);
+  hmi_cmd_lcd_clear(COLOR_BLACK);
+  hmi_cmd_lcd_draw_text(10, 10, COLOR_GREEN, "c\na\nl");
+  hmi_cmd_lcd_draw_text(142, 10, COLOR_CYAN, "c\ne\nn");
 }
 
-static void QueueCalEdgeStatic()
+static void QueueCalEdgeStatic(void)
 {
-  QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl", COLOR_GREEN);
-  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt", COLOR_CYAN);
+  hmi_cmd_lcd_clear(COLOR_BLACK);
+  hmi_cmd_lcd_draw_text(10, 10, COLOR_GREEN, "e\nd\ng");
+  hmi_cmd_lcd_draw_text(142, 10, COLOR_CYAN, "m\na\nx");
 }
 
-static void ResetCalUiState()
+static void ResetCalUiState(void)
 {
   s_calMarkerLastX = -1;
   s_calMarkerLastY = -1;
-  s_calStaticSeqBarrier = 0;
 }
 
-static void QueueMenuModeBrightness()
+static void QueueMenuModeBrightness(void)
 {
-  QueueBacklightBrightness(BrightnessLevel());
+  hmi_cmd_set_brightness(BrightnessLevel());
 }
 
-static void QueueNormalModeBrightness()
+static void QueueNormalModeBrightness(void)
 {
-  QueueBacklightBrightness(DimmedBrightnessLevel());
+  hmi_cmd_set_brightness(DimmedBrightnessLevel());
 }
 
-static void EnterMenu()
+static void EnterMenu(void)
 {
   if (s_uiMode == UI_MENU)
   {
     return;
   }
-
   s_uiMode = UI_MENU;
   s_menuIndex = MENU_CAL_CENTER;
   s_lastMenuActivityMs = millis();
   s_lastMenuTimeoutRefreshMs = 0;
-
-
   QueueMenuModeBrightness();
-
   s_markerTargetVisible = false;
   if (s_markerCurrent.visible)
   {
-    if (QueueLcdDrawMarker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
+    if (hmi_cmd_lcd_draw_marker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
     {
       s_markerCurrent.visible = false;
     }
@@ -699,53 +473,49 @@ static void EnterMenu()
   QueueMenuFrame();
 }
 
-static void ExitMenu()
+static void ExitMenu(void)
 {
   if (s_uiMode == UI_NORMAL)
   {
     return;
   }
-
   s_uiMode = UI_NORMAL;
   s_skipMarkerUpdateOnce = true;
   s_markerCurrent.visible = false;
-
   QueueNormalModeBrightness();
-  QueueLcdSetBackgroundColor(COLOR_BLACK);
-  QueueLcdClear(COLOR_BLACK);
+  hmi_cmd_lcd_set_bg(COLOR_BLACK);
+  hmi_cmd_lcd_clear(COLOR_BLACK);
 }
 
-static void EnterCalCenter()
+static void EnterCalCenter(void)
 {
   s_uiMode = UI_CAL_CENTER;
   s_tmpCalX = s_calX;
   s_tmpCalY = s_calY;
-  s_tmpCalX.cMin = s_rawX;
-  s_tmpCalX.cMax = s_rawX;
-  s_tmpCalY.cMin = s_rawY;
-  s_tmpCalY.cMax = s_rawY;
+  s_tmpCalX.cMin = CurrentRawX();
+  s_tmpCalX.cMax = CurrentRawX();
+  s_tmpCalY.cMin = CurrentRawY();
+  s_tmpCalY.cMax = CurrentRawY();
   ResetCalUiState();
   s_lastMenuActivityMs = millis();
   QueueCalCenterStatic();
-  s_calStaticSeqBarrier = s_cmdSeq;
 }
 
-static void EnterCalEdge()
+static void EnterCalEdge(void)
 {
   s_uiMode = UI_CAL_EDGE;
   s_tmpCalX = s_calX;
   s_tmpCalY = s_calY;
-  s_tmpCalX.min = s_rawX;
-  s_tmpCalX.max = s_rawX;
-  s_tmpCalY.min = s_rawY;
-  s_tmpCalY.max = s_rawY;
+  s_tmpCalX.min = CurrentRawX();
+  s_tmpCalX.max = CurrentRawX();
+  s_tmpCalY.min = CurrentRawY();
+  s_tmpCalY.max = CurrentRawY();
   ResetCalUiState();
   s_lastMenuActivityMs = millis();
   QueueCalEdgeStatic();
-  s_calStaticSeqBarrier = s_cmdSeq;
 }
 
-static void ReturnToMenu()
+static void ReturnToMenu(void)
 {
   s_uiMode = UI_MENU;
   ResetCalUiState();
@@ -754,7 +524,7 @@ static void ReturnToMenu()
   QueueMenuFrame();
 }
 
-static void SaveCalCenterAndReturn()
+static void SaveCalCenterAndReturn(void)
 {
   if (s_tmpCalX.cMin > s_tmpCalX.cMax)
   {
@@ -764,7 +534,6 @@ static void SaveCalCenterAndReturn()
   {
     const uint16_t t = s_tmpCalY.cMin; s_tmpCalY.cMin = s_tmpCalY.cMax; s_tmpCalY.cMax = t;
   }
-
   s_calX.cMin = s_tmpCalX.cMin;
   s_calX.cMax = s_tmpCalX.cMax;
   s_calY.cMin = s_tmpCalY.cMin;
@@ -774,7 +543,7 @@ static void SaveCalCenterAndReturn()
   ReturnToMenu();
 }
 
-static void SaveCalEdgeAndReturn()
+static void SaveCalEdgeAndReturn(void)
 {
   if (s_tmpCalX.min > s_tmpCalX.max)
   {
@@ -784,7 +553,6 @@ static void SaveCalEdgeAndReturn()
   {
     const uint16_t t = s_tmpCalY.min; s_tmpCalY.min = s_tmpCalY.max; s_tmpCalY.max = t;
   }
-
   s_calX.min = s_tmpCalX.min;
   s_calX.max = s_tmpCalX.max;
   s_calY.min = s_tmpCalY.min;
@@ -809,46 +577,39 @@ static void AdjustBrightness(int delta)
   {
     return;
   }
-
   s_brightnessStep = (uint8_t)next;
   SaveBrightnessPrefs();
-  QueueBacklightBrightness(BrightnessLevel());
-
+  hmi_cmd_set_brightness(BrightnessLevel());
   if (s_uiMode == UI_MENU)
   {
     QueueBrightnessField();
   }
 }
 
-static void UpdateMarkerTargetFromAdc()
+static void UpdateMarkerTargetFromAdc(void)
 {
   if (s_uiMode != UI_NORMAL)
   {
     s_markerTargetVisible = false;
     return;
   }
-
-  if (!s_haveRawX || !s_haveRawY)
+  if (!CurrentJoyValid())
   {
     s_markerTargetVisible = false;
     return;
   }
-
-  if (!s_backlightOn)
+  if (!CurrentBacklightOn())
   {
     s_markerTargetVisible = false;
     return;
   }
-
-  const int x = NormToPixel(GetNormX(), JOY_AREA_X0, JOY_AREA_X1);
-  const int y = NormToPixel(-GetNormY(), JOY_AREA_Y0, JOY_AREA_Y1);
 
   s_markerTargetVisible = true;
-  s_markerTargetX = x;
-  s_markerTargetY = y;
+  s_markerTargetX = NormToPixel(GetNormX(), JOY_AREA_X0, JOY_AREA_X1);
+  s_markerTargetY = NormToPixel(-GetNormY(), JOY_AREA_Y0, JOY_AREA_Y1);
 }
 
-static bool QueueMarkerUpdateIfNeeded()
+static bool QueueMarkerUpdateIfNeeded(void)
 {
   if (s_skipMarkerUpdateOnce)
   {
@@ -857,12 +618,11 @@ static bool QueueMarkerUpdateIfNeeded()
   }
 
   UpdateMarkerTargetFromAdc();
-
   if (!s_markerTargetVisible)
   {
     if (s_markerCurrent.visible)
     {
-      if (QueueLcdDrawMarker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
+      if (hmi_cmd_lcd_draw_marker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
       {
         s_markerCurrent.visible = false;
         return true;
@@ -871,20 +631,22 @@ static bool QueueMarkerUpdateIfNeeded()
     return false;
   }
 
-  if (s_markerCurrent.visible && s_markerCurrent.x == (uint8_t)s_markerTargetX && s_markerCurrent.y == (uint8_t)s_markerTargetY)
+  if (s_markerCurrent.visible &&
+      s_markerCurrent.x == (uint8_t)s_markerTargetX &&
+      s_markerCurrent.y == (uint8_t)s_markerTargetY)
   {
     return false;
   }
 
   if (s_markerCurrent.visible)
   {
-    if (!QueueLcdDrawMarker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
+    if (!hmi_cmd_lcd_draw_marker(s_markerCurrent.x, s_markerCurrent.y, 3, COLOR_BLACK))
     {
       return false;
     }
   }
 
-  if (!QueueLcdDrawMarker((uint8_t)s_markerTargetX, (uint8_t)s_markerTargetY, 3, COLOR_WHITE))
+  if (!hmi_cmd_lcd_draw_marker((uint8_t)s_markerTargetX, (uint8_t)s_markerTargetY, 3, COLOR_WHITE))
   {
     return false;
   }
@@ -895,95 +657,71 @@ static bool QueueMarkerUpdateIfNeeded()
   return true;
 }
 
-static void UpdateCalibrationRuntime()
+static void UpdateCalibrationRuntime(void)
 {
-  if (!s_haveRawX || !s_haveRawY || !s_backlightOn)
-  {
-    return;
-  }
-  if ((s_uiMode == UI_CAL_CENTER || s_uiMode == UI_CAL_EDGE) && QueueHasPendingBefore(s_calStaticSeqBarrier))
+  if (!CurrentJoyValid() || !CurrentBacklightOn())
   {
     return;
   }
 
+  const uint16_t rawX = CurrentRawX();
+  const uint16_t rawY = CurrentRawY();
   int px = -1;
   int py = -1;
 
   if (s_uiMode == UI_CAL_CENTER)
   {
-    if (s_rawX < s_tmpCalX.cMin) s_tmpCalX.cMin = s_rawX;
-    if (s_rawX > s_tmpCalX.cMax) s_tmpCalX.cMax = s_rawX;
-    if (s_rawY < s_tmpCalY.cMin) s_tmpCalY.cMin = s_rawY;
-    if (s_rawY > s_tmpCalY.cMax) s_tmpCalY.cMax = s_rawY;
+    if (rawX < s_tmpCalX.cMin) s_tmpCalX.cMin = rawX;
+    if (rawX > s_tmpCalX.cMax) s_tmpCalX.cMax = rawX;
+    if (rawY < s_tmpCalY.cMin) s_tmpCalY.cMin = rawY;
+    if (rawY > s_tmpCalY.cMax) s_tmpCalY.cMax = rawY;
 
     const int widthX = (int)s_calX.cMax - (int)s_calX.cMin;
     const int widthY = (int)s_calY.cMax - (int)s_calY.cMin;
     const int w = 2 * max(max(widthX, widthY), 16);
     const int cx = ((int)s_calX.cMin + (int)s_calX.cMax) / 2;
     const int cy = ((int)s_calY.cMin + (int)s_calY.cMax) / 2;
-
-    px = MapRawWindowToPixel(s_rawX, cx, w, JOY_AREA_X0, JOY_AREA_X1);
-    py = MapRawWindowToPixel(s_rawY, cy, w, JOY_AREA_Y0, JOY_AREA_Y1);
-
+    px = MapRawWindowToPixel(rawX, cx, w, JOY_AREA_X0, JOY_AREA_X1);
+    py = MapRawWindowToPixel(rawY, cy, w, JOY_AREA_Y0, JOY_AREA_Y1);
     if (px != s_calMarkerLastX || py != s_calMarkerLastY)
     {
-      QueueLcdDrawMarker((uint8_t)px, (uint8_t)py, 5, COLOR_GREEN);
+      hmi_cmd_lcd_draw_marker((uint8_t)px, (uint8_t)py, 5, COLOR_GREEN);
       s_calMarkerLastX = px;
       s_calMarkerLastY = py;
     }
   }
   else if (s_uiMode == UI_CAL_EDGE)
   {
-    if (s_rawX < s_tmpCalX.min) s_tmpCalX.min = s_rawX;
-    if (s_rawX > s_tmpCalX.max) s_tmpCalX.max = s_rawX;
-    if (s_rawY < s_tmpCalY.min) s_tmpCalY.min = s_rawY;
-    if (s_rawY > s_tmpCalY.max) s_tmpCalY.max = s_rawY;
+    if (rawX < s_tmpCalX.min) s_tmpCalX.min = rawX;
+    if (rawX > s_tmpCalX.max) s_tmpCalX.max = rawX;
+    if (rawY < s_tmpCalY.min) s_tmpCalY.min = rawY;
+    if (rawY > s_tmpCalY.max) s_tmpCalY.max = rawY;
 
-    px = MapRawFullToPixel(s_rawX, JOY_AREA_X0, JOY_AREA_X1);
-    py = MapRawFullToPixel(s_rawY, JOY_AREA_Y0, JOY_AREA_Y1);
-
+    px = MapRawFullToPixel(rawX, JOY_AREA_X0, JOY_AREA_X1);
+    py = MapRawFullToPixel(rawY, JOY_AREA_Y0, JOY_AREA_Y1);
     if (px != s_calMarkerLastX || py != s_calMarkerLastY)
     {
-      QueueLcdDrawMarker((uint8_t)px, (uint8_t)py, 3, COLOR_BLUE);
+      hmi_cmd_lcd_draw_marker((uint8_t)px, (uint8_t)py, 3, COLOR_BLUE);
       s_calMarkerLastX = px;
       s_calMarkerLastY = py;
     }
   }
 }
 
-static void TouchMenuActivity(const bool* oldButtons)
+static void HandleButtonEvents(const ButtonEvents& ev)
 {
-  if (s_uiMode == UI_NORMAL)
+  if (ev.anyChange && s_uiMode != UI_NORMAL)
   {
-    return;
+    s_lastMenuActivityMs = millis();
   }
-
-  for (uint8_t i = 0U; i < 10U; ++i)
-  {
-    if (oldButtons[i] != s_buttons[i])
-    {
-      s_lastMenuActivityMs = millis();
-      break;
-    }
-  }
-}
-
-static void HandleButtonEdges(const bool* oldButtons)
-{
-  const bool okRising   = (!oldButtons[APP_BUTTON_OK]   && s_buttons[APP_BUTTON_OK]);
-  const bool backRising = (!oldButtons[APP_BUTTON_BACK] && s_buttons[APP_BUTTON_BACK]);
-  const bool upRising   = (!oldButtons[APP_BUTTON_UP]   && s_buttons[APP_BUTTON_UP]);
-  const bool downRising = (!oldButtons[APP_BUTTON_DOWN] && s_buttons[APP_BUTTON_DOWN]);
-  const bool lupRising  = (!oldButtons[APP_BUTTON_LUP]  && s_buttons[APP_BUTTON_LUP]);
-  const bool ldnRising  = (!oldButtons[APP_BUTTON_LDN]  && s_buttons[APP_BUTTON_LDN]);
 
   if (s_uiMode != UI_NORMAL)
   {
-    if (lupRising)
+    if (ev.lupRise)
     {
       AdjustBrightness(+1);
     }
-    if (ldnRising)
+    if (ev.ldnRise)
     {
       AdjustBrightness(-1);
     }
@@ -992,31 +730,31 @@ static void HandleButtonEdges(const bool* oldButtons)
   switch (s_uiMode)
   {
     case UI_NORMAL:
-      if (okRising)
+      if (ev.okRise)
       {
         EnterMenu();
       }
       break;
 
     case UI_MENU:
-      if (backRising)
+      if (ev.backRise)
       {
         ExitMenu();
         break;
       }
-      if (upRising)
+      if (ev.upRise)
       {
         const uint8_t oldIndex = s_menuIndex;
         s_menuIndex = (s_menuIndex == 0U) ? (MENU_ITEM_COUNT - 1U) : (uint8_t)(s_menuIndex - 1U);
         QueueMenuSelectionUpdate(oldIndex, s_menuIndex);
       }
-      if (downRising)
+      if (ev.downRise)
       {
         const uint8_t oldIndex = s_menuIndex;
         s_menuIndex = (uint8_t)((s_menuIndex + 1U) % MENU_ITEM_COUNT);
         QueueMenuSelectionUpdate(oldIndex, s_menuIndex);
       }
-      if (okRising)
+      if (ev.okRise)
       {
         if (s_menuIndex == MENU_CAL_CENTER)
         {
@@ -1030,22 +768,22 @@ static void HandleButtonEdges(const bool* oldButtons)
       break;
 
     case UI_CAL_CENTER:
-      if (backRising)
+      if (ev.backRise)
       {
         ReturnToMenu();
       }
-      else if (okRising)
+      else if (ev.okRise)
       {
         SaveCalCenterAndReturn();
       }
       break;
 
     case UI_CAL_EDGE:
-      if (backRising)
+      if (ev.backRise)
       {
         ReturnToMenu();
       }
-      else if (okRising)
+      else if (ev.okRise)
       {
         SaveCalEdgeAndReturn();
       }
@@ -1056,7 +794,7 @@ static void HandleButtonEdges(const bool* oldButtons)
   }
 }
 
-static void HandleMenuTimers()
+static void HandleMenuTimers(void)
 {
   if (s_uiMode == UI_NORMAL)
   {
@@ -1072,7 +810,7 @@ static void HandleMenuTimers()
 
   if ((uint32_t)(now - s_lastMenuTimeoutRefreshMs) >= MENU_TIMEOUT_REFRESH_MS)
   {
-    QueueBacklightTimeout(MENU_TIMEOUT_VALUE_MS);
+    hmi_cmd_set_backlight_timeout(MENU_TIMEOUT_VALUE_MS);
     s_lastMenuTimeoutRefreshMs = now;
   }
 }
@@ -1092,14 +830,14 @@ static void HandleSerialCommand(const String& lineIn)
     const uint8_t index = (line[0] == 'A') ? 0U : (line[0] == 'B' ? 1U : 2U);
     uint8_t out = (uint8_t)value;
     if (out > 70U) out = 70U;
-    QueueLcdProgressBar(index, out);
+    hmi_cmd_lcd_set_progress(index, out);
     return;
   }
 
   if (line[0] == 'D')
   {
     const int value = line.substring(1).toInt();
-    QueueLcdIndicator(0, value ? 1U : 0U);
+    hmi_cmd_lcd_set_indicator(0, value != 0);
     return;
   }
 
@@ -1119,11 +857,11 @@ static void HandleSerialCommand(const String& lineIn)
     const uint32_t divider32 = 1000000UL / (uint32_t)hz;
     const uint16_t divider = (divider32 > 0xFFFFu) ? 0xFFFFu : (uint16_t)divider32;
     const uint16_t delayMs = (ms > 0xFFFFL) ? 0xFFFFu : (uint16_t)ms;
-    QueueTone(divider, delayMs);
+    hmi_cmd_play_tone(divider, delayMs);
   }
 }
 
-static void PumpSerialRx()
+static void PumpSerialRx(void)
 {
   if (!SerialEnabled())
   {
@@ -1152,121 +890,115 @@ static void PumpSerialRx()
   }
 }
 
-static void ParsePacket(const uint8_t* rx)
+static void ProcessHmiChanges(void)
 {
-  const uint8_t itemCount = (uint8_t)(rx[0] & 0x0F);
-  const uint8_t index0 = (uint8_t)(rx[0] >> 4);
-  if (index0 != APP_I2C_INDEX_STATUS || itemCount == 0U || itemCount > I2C_ITEM_COUNT_MAX)
+  ButtonEvents ev;
+  bool joyChanged = false;
+
+  for (;;)
   {
-    return;
-  }
-
-  const uint8_t expectedLen = (uint8_t)(2U + 2U * (itemCount - 1U));
-  if (expectedLen > I2C_READ_LEN)
-  {
-    return;
-  }
-
-  bool oldButtons[10];
-  memcpy(oldButtons, s_buttons, sizeof(oldButtons));
-
-  s_status = rx[1];
-  s_lcdSendAllowed = ((s_status & (1U << STATUS_BIT_LCD_BUSY)) == 0U);
-  s_backlightOn = ((s_status & (1U << STATUS_BIT_BACKLIGHT_ON)) != 0U);
-
-  if (!s_initialBrightnessQueued)
-  {
-    QueueNormalModeBrightness();
-    s_initialBrightnessQueued = true;
-  }
-
-  for (uint8_t i = 1U; i < itemCount; ++i)
-  {
-    const uint8_t off = (uint8_t)(2U + 2U * (i - 1U));
-    const uint8_t index = (uint8_t)(rx[off] >> 4);
-    const uint16_t value = (uint16_t)(((uint16_t)(rx[off] & 0x0F) << 8) | rx[off + 1U]);
-
-    if (index == APP_I2C_INDEX_ADC_X)
+    const hmi_data_idx_t idx = hmi_get_next_changed();
+    if (idx == HMI_DATA_COUNT)
     {
-      s_rawX = value;
-      s_haveRawX = true;
+      break;
     }
-    else if (index == APP_I2C_INDEX_ADC_Y)
+
+    switch (idx)
     {
-      s_rawY = value;
-      s_haveRawY = true;
-    }
-    else if (index == APP_I2C_INDEX_BUTTONS)
-    {
-      for (uint8_t b = 0U; b < 10U; ++b)
-      {
-        s_buttons[b] = ((value & (1U << b)) != 0U);
-      }
+      case HMI_DATA_STAT_USB_CONN:
+        HandleUsbState(hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
+        break;
+
+      case HMI_DATA_JOY_X:
+      case HMI_DATA_JOY_Y:
+        joyChanged = true;
+        break;
+
+      case HMI_DATA_BTN_OK:
+        ev.anyChange = true;
+        ev.okRise = ButtonPressed(HMI_DATA_BTN_OK);
+        break;
+
+      case HMI_DATA_BTN_BACK:
+        ev.anyChange = true;
+        ev.backRise = ButtonPressed(HMI_DATA_BTN_BACK);
+        break;
+
+      case HMI_DATA_BTN_UP:
+        ev.anyChange = true;
+        ev.upRise = ButtonPressed(HMI_DATA_BTN_UP);
+        break;
+
+      case HMI_DATA_BTN_DOWN:
+        ev.anyChange = true;
+        ev.downRise = ButtonPressed(HMI_DATA_BTN_DOWN);
+        break;
+
+      case HMI_DATA_BTN_LUP:
+        ev.anyChange = true;
+        ev.lupRise = ButtonPressed(HMI_DATA_BTN_LUP);
+        break;
+
+      case HMI_DATA_BTN_LDN:
+        ev.anyChange = true;
+        ev.ldnRise = ButtonPressed(HMI_DATA_BTN_LDN);
+        break;
+
+      case HMI_DATA_BTN_ON:
+      case HMI_DATA_BTN_FIRE:
+      case HMI_DATA_BTN_RUP:
+      case HMI_DATA_BTN_RDN:
+        ev.anyChange = true;
+        break;
+
+      default:
+        break;
     }
   }
 
-  HandleUsbState((s_status & (1U << STATUS_BIT_USB_CONNECTED)) != 0U);
-  TouchMenuActivity(oldButtons);
-  HandleButtonEdges(oldButtons);
+  if (joyChanged)
+  {
+    s_hmiDataValid = true;
+  }
+
+  HandleButtonEvents(ev);
   UpdateCalibrationRuntime();
   QueueMarkerUpdateIfNeeded();
-  PrintPacketLine(itemCount);
-  ++s_rxSeq;
+  PrintPacketLine();
 }
 
-static void PollI2C()
-{
-  uint8_t rx[I2C_READ_LEN];
-  uint8_t len = 0;
-
-  const int requested = Wire.requestFrom((int)I2C_ADDR, (int)I2C_READ_LEN, (int)true);
-  while (Wire.available() && len < I2C_READ_LEN)
-  {
-    rx[len++] = (uint8_t)Wire.read();
-  }
-
-  if (requested != I2C_READ_LEN || len != I2C_READ_LEN)
-  {
-    return;
-  }
-
-  ParsePacket(rx);
-}
-
-static void TrySendQueuedCommandAfterFreshRx()
-{
-  // Do not send more than one command per freshly received status packet.
-  if (s_lastTxRxSeq == s_rxSeq)
-  {
-    return;
-  }
-
-  if (SendOneQueuedCommand())
-  {
-    s_lastTxRxSeq = s_rxSeq;
-  }
-}
-
-void setup()
+void setup(void)
 {
   LoadPrefs();
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(100000);
+  hmi_init();
   s_nextPollMs = millis();
   s_lastMenuActivityMs = s_nextPollMs;
   s_lastMenuTimeoutRefreshMs = s_nextPollMs;
 }
 
-void loop()
+void loop(void)
 {
   const uint32_t now = millis();
   if ((int32_t)(now - s_nextPollMs) >= 0)
   {
-    s_nextPollMs += I2C_POLL_MS;
-    PollI2C();
+    s_nextPollMs += HMI_POLL_MS;
+
+    const hmi_tick_result_t tickResult = hmi_tick();
+    DebugLogHmiErrors(tickResult);
+
+    const hmi_tick_result_t dataErrors = (hmi_tick_result_t)(tickResult &
+      (HMI_TICK_ERR_NOT_INITIALIZED | HMI_TICK_ERR_I2C_REQUEST | HMI_TICK_ERR_I2C_READ | HMI_TICK_ERR_BAD_PACKET));
+
+    if (dataErrors != HMI_TICK_OK)
+    {
+      s_hmiDataValid = false;
+    }
+    else
+    {
+      ProcessHmiChanges();
+    }
   }
 
   HandleMenuTimers();
   PumpSerialRx();
-  TrySendQueuedCommandAfterFreshRx();
 }
