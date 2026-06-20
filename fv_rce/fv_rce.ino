@@ -29,14 +29,16 @@ static constexpr uint8_t STATUS_BIT_LCD_BUSY      = 0;
 static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 1;
 static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON  = 3;
 
-static constexpr uint16_t COLOR_BLACK = 0x0000;
-static constexpr uint16_t COLOR_WHITE = 0xFFFF;
-static constexpr uint16_t COLOR_GREEN = 0x07E0;
-static constexpr uint16_t COLOR_BLUE  = 0x001F;
+static constexpr uint16_t COLOR_BLACK  = 0x0000;
+static constexpr uint16_t COLOR_WHITE  = 0xFFFF;
+static constexpr uint16_t COLOR_GREEN  = 0x07E0;
+static constexpr uint16_t COLOR_BLUE   = 0x001F;
+static constexpr uint16_t COLOR_YELLOW = 0xFFE0;
+static constexpr uint16_t COLOR_CYAN   = 0x07FF;
 
-static constexpr int JOY_AREA_X0 = 40;
+static constexpr int JOY_AREA_X0 = 45;
 static constexpr int JOY_AREA_Y0 = 10;
-static constexpr int JOY_AREA_X1 = 119;
+static constexpr int JOY_AREA_X1 = 114;
 static constexpr int JOY_AREA_Y1 = 79;
 
 static constexpr uint8_t CMD_BACKLIGHT_TIMEOUT    = 0x03;
@@ -81,8 +83,8 @@ struct MarkerState
 struct AxisCal
 {
   uint16_t min = 0;
-  uint16_t cMin = 1955;
-  uint16_t cMax = 1955;
+  uint16_t cMin = 1942;
+  uint16_t cMax = 1971;
   uint16_t max = 4095;
 };
 
@@ -122,8 +124,8 @@ static bool s_lcdSendAllowed = false;
 static uint32_t s_rxSeq = 0;
 static uint32_t s_lastTxRxSeq = 0;
 
-static uint16_t s_rawX = 2048;
-static uint16_t s_rawY = 2048;
+static uint16_t s_rawX = 1957;
+static uint16_t s_rawY = 1957;
 static bool s_haveRawX = false;
 static bool s_haveRawY = false;
 static bool s_buttons[10] = { false };
@@ -137,8 +139,8 @@ static UiMode s_uiMode = UI_NORMAL;
 static uint8_t s_menuIndex = MENU_CAL_CENTER;
 static uint8_t s_brightnessStep = 7;
 
-static AxisCal s_calX{177, 1955, 1956, 4025};
-static AxisCal s_calY{0, 1958, 1959, 4027};
+static AxisCal s_calX{177, 1942, 1971, 4025};
+static AxisCal s_calY{0, 1942, 1971, 4027};
 static AxisCal s_tmpCalX;
 static AxisCal s_tmpCalY;
 static int s_calMarkerLastX = -1;
@@ -187,13 +189,13 @@ static void LoadPrefs()
   }
 
   s_calX.min  = s_prefs.getUShort("x_min", 177);
-  s_calX.cMin = s_prefs.getUShort("x_cmin", 1955);
-  s_calX.cMax = s_prefs.getUShort("x_cmax", 1956);
+  s_calX.cMin = s_prefs.getUShort("x_cmin", 1942);
+  s_calX.cMax = s_prefs.getUShort("x_cmax", 1971);
   s_calX.max  = s_prefs.getUShort("x_max", 4025);
 
   s_calY.min  = s_prefs.getUShort("y_min", 0);
-  s_calY.cMin = s_prefs.getUShort("y_cmin", 1958);
-  s_calY.cMax = s_prefs.getUShort("y_cmax", 1959);
+  s_calY.cMin = s_prefs.getUShort("y_cmin", 1942);
+  s_calY.cMax = s_prefs.getUShort("y_cmax", 1971);
   s_calY.max  = s_prefs.getUShort("y_max", 4027);
 }
 
@@ -400,25 +402,27 @@ static bool QueueLcdDrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color
   return QueueCommand(data, sizeof(data), PRIO_HIGH, true, true);
 }
 
-static bool QueueLcdDrawText(uint8_t x, uint8_t y, const char* text)
+static bool QueueLcdDrawText(uint8_t x, uint8_t y, const char* text, uint16_t color)
 {
   if (text == nullptr)
   {
     return false;
   }
   const size_t textLen = strlen(text);
-  if (textLen > 21)
+  if (textLen > 26)
   {
     return false;
   }
 
-  uint8_t data[24] = { 0 };
+  uint8_t data[32] = { 0 };
   data[0] = CMD_LCD_DRAW_TEXT;
   data[1] = x;
   data[2] = y;
-  memcpy(&data[3], text, textLen);
-  data[3 + textLen] = 0;
-  return QueueCommand(data, (uint8_t)(4 + textLen), PRIO_MED, true, true);
+  data[3] = (uint8_t)(color & 0xFF);
+  data[4] = (uint8_t)(color >> 8);
+  memcpy(&data[5], text, textLen);
+  data[5 + textLen] = 0;
+  return QueueCommand(data, (uint8_t)(6 + textLen), PRIO_MED, true, true);
 }
 
 static void LogTx(const uint8_t* data, uint8_t len)
@@ -616,16 +620,15 @@ static void QueueBrightnessField()
 {
   char line[22];
   snprintf(line, sizeof(line), "Brightness %3u   ", BrightnessLevel());
-  QueueLcdDrawText(10, 56, line);
+  QueueLcdDrawText(10, 56, line, COLOR_CYAN);
 }
 
 static void QueueMenuFrame()
 {
-  QueueLcdSetBackgroundColor(COLOR_BLACK);
   QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "MENU");
-  QueueLcdDrawText(10, MenuItemY(MENU_CAL_CENTER), MenuItemText(MENU_CAL_CENTER, s_menuIndex == MENU_CAL_CENTER));
-  QueueLcdDrawText(10, MenuItemY(MENU_CAL_EDGE), MenuItemText(MENU_CAL_EDGE, s_menuIndex == MENU_CAL_EDGE));
+  QueueLcdDrawText(10, 10, "MENU", COLOR_YELLOW);
+  QueueLcdDrawText(10, MenuItemY(MENU_CAL_CENTER), MenuItemText(MENU_CAL_CENTER, s_menuIndex == MENU_CAL_CENTER), s_menuIndex == MENU_CAL_CENTER ? COLOR_GREEN : COLOR_WHITE);
+  QueueLcdDrawText(10, MenuItemY(MENU_CAL_EDGE), MenuItemText(MENU_CAL_EDGE, s_menuIndex == MENU_CAL_EDGE), s_menuIndex == MENU_CAL_EDGE ? COLOR_GREEN : COLOR_WHITE);
   QueueBrightnessField();
 }
 
@@ -635,24 +638,22 @@ static void QueueMenuSelectionUpdate(uint8_t oldIndex, uint8_t newIndex)
   {
     return;
   }
-  QueueLcdDrawText(10, MenuItemY(oldIndex), MenuItemText(oldIndex, false));
-  QueueLcdDrawText(10, MenuItemY(newIndex), MenuItemText(newIndex, true));
+  QueueLcdDrawText(10, MenuItemY(oldIndex), MenuItemText(oldIndex, false), COLOR_WHITE);
+  QueueLcdDrawText(10, MenuItemY(newIndex), MenuItemText(newIndex, true), COLOR_GREEN);
 }
 
 static void QueueCalCenterStatic()
 {
-  QueueLcdSetBackgroundColor(COLOR_BLACK);
   QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl");
-  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt");
+  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl", COLOR_GREEN);
+  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt", COLOR_CYAN);
 }
 
 static void QueueCalEdgeStatic()
 {
-  QueueLcdSetBackgroundColor(COLOR_BLACK);
   QueueLcdClear(COLOR_BLACK);
-  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl");
-  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt");
+  QueueLcdDrawText(10, 10, "c\na\nn\nc\ne\nl", COLOR_GREEN);
+  QueueLcdDrawText(142, 10, "a\nc\nc\ne\np\nt", COLOR_CYAN);
 }
 
 static void ResetCalUiState()

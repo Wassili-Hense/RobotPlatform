@@ -1,4 +1,4 @@
-﻿I2C protocol
+I2C protocol
 Slave address: 0x14
 -----------------------------
 Read from slave (packet)
@@ -61,10 +61,11 @@ Multibyte parameters are little-endian.
   x,y   - marker center
   idx   - marker index (size is taken from internal table)
   format: [0x12][x][y][idx][color_lo][color_hi]
-- LCD_DrawText(x, y, text)
-  text must be zero-terminated, max length 21
+- LCD_DrawText(x, y, color, text)
+  color: RGB565
+  text must be zero-terminated, max length 26
   background color is global (see LCD_SetBackgroundColor)
-  format: [0x13][x][y][text...][0]
+  format: [0x13][x][y][color_lo][color_hi][text...][0]
 - LCD_SetBackgroundColor(color) color: RGB565
   format: [0x14][color_lo][color_hi]
 - LCD_Indicator(index, state)

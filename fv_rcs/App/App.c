@@ -170,9 +170,10 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
     break;
 
   case APP_RX_CMD_LCD_DRAW_TEXT:
-    if (size >= 4U) {
+    if (size >= 6U) {
+      uint16_t color = (uint16_t) data[3] | ((uint16_t) data[4] << 8);
       if ((data[size - 1U] != 0U)) data[size - 1U] = 0U;
-      (void) LCD_DrawText(data[1], data[2], (const char*) &data[3], LCD_WHITE);
+      (void) LCD_DrawText(data[1], data[2], (const char*) &data[5], color);
     }
     break;
 
