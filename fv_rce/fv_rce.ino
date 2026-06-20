@@ -7,19 +7,23 @@ static constexpr uint8_t I2C_ADDR = 0x14;
 static constexpr int I2C_SDA = 21;
 static constexpr int I2C_SCL = 22;
 static constexpr uint32_t I2C_POLL_MS = 5;
-static constexpr uint8_t I2C_READ_LEN = 26;
-static constexpr uint8_t I2C_ITEM_COUNT_MAX = 13;
+static constexpr uint8_t I2C_READ_LEN = 8;
+static constexpr uint8_t I2C_ITEM_COUNT_MAX = 4;
 
 static constexpr uint8_t APP_I2C_INDEX_STATUS       = 0;
 static constexpr uint8_t APP_I2C_INDEX_ADC_X        = 1;
 static constexpr uint8_t APP_I2C_INDEX_ADC_Y        = 2;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_0     = 3;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_UP    = 5;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_DOWN  = 6;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_BACK  = 7;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_OK    = 8;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_LUP   = 9;
-static constexpr uint8_t APP_I2C_INDEX_BUTTON_LDN   = 10;
+static constexpr uint8_t APP_I2C_INDEX_BUTTONS      = 3;
+static constexpr uint8_t APP_BUTTON_ON              = 0;
+static constexpr uint8_t APP_BUTTON_FIRE            = 1;
+static constexpr uint8_t APP_BUTTON_UP              = 2;
+static constexpr uint8_t APP_BUTTON_DOWN            = 3;
+static constexpr uint8_t APP_BUTTON_BACK            = 4;
+static constexpr uint8_t APP_BUTTON_OK              = 5;
+static constexpr uint8_t APP_BUTTON_LUP             = 6;
+static constexpr uint8_t APP_BUTTON_LDN             = 7;
+static constexpr uint8_t APP_BUTTON_RUP             = 8;
+static constexpr uint8_t APP_BUTTON_RDN             = 9;
 
 static constexpr uint8_t STATUS_BIT_LCD_BUSY      = 0;
 static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 1;
@@ -122,7 +126,7 @@ static uint16_t s_rawX = 2048;
 static uint16_t s_rawY = 2048;
 static bool s_haveRawX = false;
 static bool s_haveRawY = false;
-static bool s_buttons[13] = { false };
+static bool s_buttons[10] = { false };
 
 static MarkerState s_markerCurrent;
 static int s_markerTargetX = -1;
@@ -141,8 +145,8 @@ static int s_calMarkerLastX = -1;
 static int s_calMarkerLastY = -1;
 static uint32_t s_calStaticSeqBarrier = 0;
 
-static const char* kButtonNames[13] = {
-  "", "", "", "ON", "Fire", "UP", "DOWN", "BACK", "OK", "LUP", "LDN", "RUP", "RDN"
+static const char* kButtonNames[10] = {
+  "ON", "Fire", "UP", "DOWN", "BACK", "OK", "LUP", "LDN", "RUP", "RDN"
 };
 
 static const uint8_t kBrightnessLevels[11] = { 1, 2, 3, 5, 8, 13, 20, 32, 50, 79, 127 };
@@ -292,7 +296,7 @@ static int MapRawFullToPixel(uint16_t raw, int px0, int px1)
 
 static const char* FirstPressedButtonName()
 {
-  for (uint8_t i = APP_I2C_INDEX_BUTTON_0; i < 13; ++i)
+  for (uint8_t i = 0U; i < 10U; ++i)
   {
     if (s_buttons[i])
     {
@@ -953,7 +957,7 @@ static void TouchMenuActivity(const bool* oldButtons)
     return;
   }
 
-  for (uint8_t i = APP_I2C_INDEX_BUTTON_0; i < 13; ++i)
+  for (uint8_t i = 0U; i < 10U; ++i)
   {
     if (oldButtons[i] != s_buttons[i])
     {
@@ -965,12 +969,12 @@ static void TouchMenuActivity(const bool* oldButtons)
 
 static void HandleButtonEdges(const bool* oldButtons)
 {
-  const bool okRising   = (!oldButtons[APP_I2C_INDEX_BUTTON_OK]   && s_buttons[APP_I2C_INDEX_BUTTON_OK]);
-  const bool backRising = (!oldButtons[APP_I2C_INDEX_BUTTON_BACK] && s_buttons[APP_I2C_INDEX_BUTTON_BACK]);
-  const bool upRising   = (!oldButtons[APP_I2C_INDEX_BUTTON_UP]   && s_buttons[APP_I2C_INDEX_BUTTON_UP]);
-  const bool downRising = (!oldButtons[APP_I2C_INDEX_BUTTON_DOWN] && s_buttons[APP_I2C_INDEX_BUTTON_DOWN]);
-  const bool lupRising  = (!oldButtons[APP_I2C_INDEX_BUTTON_LUP]  && s_buttons[APP_I2C_INDEX_BUTTON_LUP]);
-  const bool ldnRising  = (!oldButtons[APP_I2C_INDEX_BUTTON_LDN]  && s_buttons[APP_I2C_INDEX_BUTTON_LDN]);
+  const bool okRising   = (!oldButtons[APP_BUTTON_OK]   && s_buttons[APP_BUTTON_OK]);
+  const bool backRising = (!oldButtons[APP_BUTTON_BACK] && s_buttons[APP_BUTTON_BACK]);
+  const bool upRising   = (!oldButtons[APP_BUTTON_UP]   && s_buttons[APP_BUTTON_UP]);
+  const bool downRising = (!oldButtons[APP_BUTTON_DOWN] && s_buttons[APP_BUTTON_DOWN]);
+  const bool lupRising  = (!oldButtons[APP_BUTTON_LUP]  && s_buttons[APP_BUTTON_LUP]);
+  const bool ldnRising  = (!oldButtons[APP_BUTTON_LDN]  && s_buttons[APP_BUTTON_LDN]);
 
   if (s_uiMode != UI_NORMAL)
   {
@@ -1162,7 +1166,7 @@ static void ParsePacket(const uint8_t* rx)
     return;
   }
 
-  bool oldButtons[13];
+  bool oldButtons[10];
   memcpy(oldButtons, s_buttons, sizeof(oldButtons));
 
   s_status = rx[1];
@@ -1191,9 +1195,12 @@ static void ParsePacket(const uint8_t* rx)
       s_rawY = value;
       s_haveRawY = true;
     }
-    else if (index >= APP_I2C_INDEX_BUTTON_0 && index < 13U)
+    else if (index == APP_I2C_INDEX_BUTTONS)
     {
-      s_buttons[index] = (value != 0U);
+      for (uint8_t b = 0U; b < 10U; ++b)
+      {
+        s_buttons[b] = ((value & (1U << b)) != 0U);
+      }
     }
   }
 

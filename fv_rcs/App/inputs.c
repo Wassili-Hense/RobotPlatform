@@ -4,11 +4,7 @@
 
 extern ADC_HandleTypeDef hadc;
 
-volatile uint16_t ADC_V = 0;
-volatile uint16_t ADC_X = 0;
-volatile uint16_t ADC_Y = 0;
-volatile uint16_t ADC_U = 0;
-
+static uint16_t s_ai[ADC_INPUT_COUNT];
 /* DMA буфер */
 static uint16_t s_dma[ADC_INPUT_COUNT];
 
@@ -26,7 +22,6 @@ static uint8_t s_initialized = 0U;
 static volatile uint8_t s_changedMask = 0U;
 
 /* ---------------- Digital Inputs ---------------- */
-#define BUTTON_COUNT         10U
 #define DEBOUNCE_TICKS       20U  /* 20 ms при вызове Buttons_Get(ch) каждые 1 мс для данного канала */
 #define ADC_TIMEOUT_MS        2U
 #define ADC_START_PERIOD_MS  25U
@@ -36,7 +31,7 @@ typedef struct {
   uint16_t pin;
 } ButtonPin;
 
-static const ButtonPin s_buttonPins[BUTTON_COUNT] = {
+static const ButtonPin s_buttonPins[INPUT_BUTTON_COUNT] = {
     { GPIOA, GPIO_PIN_12 }, /* Button ON */
     { GPIOB, GPIO_PIN_10 }, /* Button Fire */
     { GPIOA, GPIO_PIN_6  }, /* Button A */
@@ -49,8 +44,8 @@ static const ButtonPin s_buttonPins[BUTTON_COUNT] = {
     { GPIOC, GPIO_PIN_13 }  /* Button Back */
 };
 
-static uint8_t s_integrator[BUTTON_COUNT];
-static uint8_t s_state[BUTTON_COUNT];
+static uint8_t s_integrator[INPUT_BUTTON_COUNT];
+static uint8_t s_state[INPUT_BUTTON_COUNT];
 
 /* ---------------- helpers ---------------- */
 static void HistShiftAppend(uint16_t hist[5], uint16_t value) {
@@ -90,10 +85,10 @@ static void InitHistoryFromFirstSample(void) {
     s_hist_u[i] = s_dma[ADC_INPUT_CH_U];
   }
 
-  ADC_V = s_dma[ADC_INPUT_CH_V];
-  ADC_X = s_dma[ADC_INPUT_CH_X];
-  ADC_Y = s_dma[ADC_INPUT_CH_Y];
-  ADC_U = s_dma[ADC_INPUT_CH_U];
+  s_ai[ADC_INPUT_CH_V] = s_dma[ADC_INPUT_CH_V];
+  s_ai[ADC_INPUT_CH_X] = s_dma[ADC_INPUT_CH_X];
+  s_ai[ADC_INPUT_CH_Y] = s_dma[ADC_INPUT_CH_Y];
+  s_ai[ADC_INPUT_CH_U] = s_dma[ADC_INPUT_CH_U];
 
   s_changedMask = (1U << ADC_INPUT_CH_V)
                 | (1U << ADC_INPUT_CH_X)
@@ -124,20 +119,20 @@ static void UpdateFilteredValues(void) {
   newY = Median5(s_hist_y);
   newU = Median5(s_hist_u);
 
-  if (ADC_V != newV) {
-    ADC_V = newV;
+  if (s_ai[ADC_INPUT_CH_V] != newV) {
+    s_ai[ADC_INPUT_CH_V] = newV;
     changedMask |= (1U << ADC_INPUT_CH_V);
   }
-  if (ADC_X != newX) {
-    ADC_X = newX;
+  if (s_ai[ADC_INPUT_CH_X] != newX) {
+    s_ai[ADC_INPUT_CH_X] = newX;
     changedMask |= (1U << ADC_INPUT_CH_X);
   }
-  if (ADC_Y != newY) {
-    ADC_Y = newY;
+  if (s_ai[ADC_INPUT_CH_Y] != newY) {
+    s_ai[ADC_INPUT_CH_Y] = newY;
     changedMask |= (1U << ADC_INPUT_CH_Y);
   }
-  if (ADC_U != newU) {
-    ADC_U = newU;
+  if (s_ai[ADC_INPUT_CH_U] != newU) {
+    s_ai[ADC_INPUT_CH_U] = newU;
     changedMask |= (1U << ADC_INPUT_CH_U);
   }
 
@@ -162,10 +157,10 @@ void Inp_Init(void) {
   memset((void*)s_hist_y, 0, sizeof(s_hist_y));
   memset((void*)s_hist_u, 0, sizeof(s_hist_u));
 
-  ADC_V = 0U;
-  ADC_X = 0U;
-  ADC_Y = 0U;
-  ADC_U = 0U;
+  s_ai[ADC_INPUT_CH_V] = 0U;
+  s_ai[ADC_INPUT_CH_X] = 0U;
+  s_ai[ADC_INPUT_CH_Y] = 0U;
+  s_ai[ADC_INPUT_CH_U] = 0U;
 
   s_adcBusy = 0U;
   s_adcStartTick = 0U;
@@ -173,7 +168,7 @@ void Inp_Init(void) {
   s_initialized = 0U;
   s_changedMask = 0U;
 
-  for (i = 0U; i < BUTTON_COUNT; i++) {
+  for (i = 0U; i < INPUT_BUTTON_COUNT; i++) {
     raw = Buttons_ReadRaw(i);
     s_state[i] = raw;
     s_integrator[i] = raw ? DEBOUNCE_TICKS : 0U;
@@ -221,10 +216,17 @@ uint8_t Inp_AdcisChanged(uint8_t channel) {
   return changed;
 }
 
+uint16_t Inp_AiGet(uint8_t channel) {
+  if (channel >= ADC_INPUT_COUNT) {
+    return 0U;
+  }
+  return s_ai[channel];
+}
+
 uint8_t Inp_DiGet(uint8_t ch) {
   uint8_t raw;
 
-  if (ch >= BUTTON_COUNT) {
+  if (ch >= INPUT_BUTTON_COUNT) {
     return 0U;
   }
 

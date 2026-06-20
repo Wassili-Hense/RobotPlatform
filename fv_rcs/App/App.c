@@ -13,7 +13,7 @@
 
 #define APP_ADC_FORCE_SEND_MS          5000U
 #define APP_ADC_DELTA                    15U
-#define APP_I2C_ITEM_COUNT              13U
+#define APP_I2C_ITEM_COUNT              4U
 #define APP_POWER_OFF_COUNT            1000U
 
 #define APP_ABS_DIFF_U16(a, b) (((a) >= (b)) ? ((a) - (b)) : ((b) - (a)))
@@ -22,16 +22,7 @@ enum {
   APP_I2C_INDEX_STATUS = 0,
   APP_I2C_INDEX_ADC_X = 1,
   APP_I2C_INDEX_ADC_Y = 2,
-  APP_I2C_INDEX_BUTTON_0 = 3,
-  APP_I2C_INDEX_BUTTON_1 = 4,
-  APP_I2C_INDEX_BUTTON_2 = 5,
-  APP_I2C_INDEX_BUTTON_3 = 6,
-  APP_I2C_INDEX_BUTTON_4 = 7,
-  APP_I2C_INDEX_BUTTON_5 = 8,
-  APP_I2C_INDEX_BUTTON_6 = 9,
-  APP_I2C_INDEX_BUTTON_7 = 10,
-  APP_I2C_INDEX_BUTTON_8 = 11,
-  APP_I2C_INDEX_BUTTON_9 = 12
+  APP_I2C_INDEX_BUTTONS = 3
 };
 
 enum {
@@ -74,7 +65,7 @@ static void App_PrepareDigitalForI2c(uint8_t index, uint16_t value) {
   if (s_i2cSentValue[index] != value) s_i2cDirty[index] = 1U;
 }
 
-static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index, uint16_t value) {
+static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index) {
   uint8_t adcChanged;
 
   if (index >= APP_I2C_ITEM_COUNT) return 0U;
@@ -82,7 +73,7 @@ static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index, uint16
   adcChanged = Inp_AdcisChanged(adcChannel);
 
   if (adcChanged) {
-    s_i2cActualValue[index] = value;
+    s_i2cActualValue[index] = Inp_AiGet(adcChannel);
     if (!s_i2cDirty[index] && (APP_ABS_DIFF_U16(s_i2cActualValue[index], s_i2cSentValue[index]) > APP_ADC_DELTA)) s_i2cDirty[index] = 1U;
   }
 
@@ -264,7 +255,7 @@ uint8_t Tone_IsBusy(void) {
 static void App_ProcessPower(void) {
   static uint16_t offCounter = 0U;
 
-  if (ADC_V < 850U) {
+  if (Inp_AiGet(ADC_INPUT_CH_V) < 850U) {
     if (offCounter >= APP_POWER_OFF_COUNT) {
       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
     } else {
@@ -273,7 +264,7 @@ static void App_ProcessPower(void) {
         Tone(500U, 60U);
       }
     }
-  } else if (s_i2cActualValue[APP_I2C_INDEX_BUTTON_0]) {
+  } else if ((s_i2cActualValue[APP_I2C_INDEX_BUTTONS] & 0x0001U) != 0U) {
     offCounter++;
     if (offCounter > APP_POWER_OFF_COUNT) {
       if (offCounter == (APP_POWER_OFF_COUNT + 2U)) {
@@ -338,15 +329,15 @@ static uint8_t adc_to_soc(uint16_t adc) {
 /* -------------------------------------------------------------------------- */
 static void App_ProcessAdc(void) {
   if (Inp_AdcEnsureStarted()) {
-  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_X, APP_I2C_INDEX_ADC_X, ADC_X)) {
-  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, APP_I2C_INDEX_ADC_Y, ADC_Y)) {
+  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_X, APP_I2C_INDEX_ADC_X)) {
+  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, APP_I2C_INDEX_ADC_Y)) {
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
-    uint8_t usb_conn = ((ADC_U > 1000U) ? 2U : 0U);
+    uint8_t usb_conn = ((Inp_AiGet(ADC_INPUT_CH_U) > 1000U) ? 2U : 0U);
     App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, usb_conn | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
     s_indicatorValue[1] = usb_conn | (s_indicatorValue[1] & 1);
     (void) App_DrawIndicator(1U);
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U) {
-    (void) LCD_DrawProgressBar(3U, adc_to_soc(ADC_V));
+    (void) LCD_DrawProgressBar(3U, adc_to_soc(Inp_AiGet(ADC_INPUT_CH_V)));
   }
 }
 
@@ -381,30 +372,23 @@ void App_Init(void) {
 
 void App_Run(void) {
   uint32_t now = HAL_GetTick();
-
   if (now != s_lastAppTick) {
-    uint8_t anyButtonPressed = 0U;
+    uint16_t buttons = 0U;
     uint8_t i;
-
     s_lastAppTick++;
-
-    for (i = 0U; i < 10U; i++) {
-      uint8_t button = Inp_DiGet(i);
-      App_PrepareDigitalForI2c((uint8_t) (APP_I2C_INDEX_BUTTON_0 + i), button);
-      if (button != 0U) {
-        anyButtonPressed = 1U;
+    for (i = 0U; i < INPUT_BUTTON_COUNT; i++) {
+      if (Inp_DiGet(i) != 0U) {
+        buttons |= (uint16_t)(1U << i);
       }
     }
-
-    if (anyButtonPressed != 0U) {
+    App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTONS, buttons);
+    if (buttons != 0U) {
       LCD_SetBacklightTimeout(15000U);
     }
-
     App_ProcessTone();
     App_ProcessAdc();
     App_ProcessPower();
   }
-
   if ((LCD_Process() == 0U) && (HAL_GetTick() == s_lastAppTick)) {
     __WFI();
   }
