@@ -23,16 +23,19 @@ Packet bytes:
   - bit5 - reserved, 0
   - bit6 - LCD backlight state (1 = on, 0 = off)
   - bit7 - LCD busy / flow control (1 = master must stop sending LCD commands, 0 = master may send LCD commands)
-- Byte2 = ADC X value[7:0]
-- Byte3
-  - bit0..3 - ADC X value[11:8]
-  - bit4..6 - reserved, 0
-  - bit7 ADC X channel changed
-- Byte4 = ADC Y value[7:0]
-- Byte5
-  - bit0..3 - ADC Y value[11:8]
-  - bit4..6 - reserved, 0
-  - bit7 ADC Y channel changed
+- Byte2 = ADC X low byte
+- Byte3:
+  - bits[3:0]  = ADC X bits[11:8]
+  - bits[6:4]  = reserved, 0
+  - bit7       = ADC X changed flag
+  - master reconstructs ADC X as: ((Byte3 & 0x0F) << 8) | Byte2
+
+- Byte4 = ADC Y low byte
+- Byte5:
+  - bits[3:0]  = ADC Y bits[11:8]
+  - bits[6:4]  = reserved, 0
+  - bit7       = ADC Y changed flag
+  - master reconstructs ADC Y as: ((Byte5 & 0x0F) << 8) | Byte4
 
 Buttons bit = 1 means button pressed
 

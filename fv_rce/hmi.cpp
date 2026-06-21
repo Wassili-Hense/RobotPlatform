@@ -49,9 +49,6 @@ static uint32_t s_changed = 0U;
 static uint16_t s_joyX = 0U;
 static uint16_t s_joyY = 0U;
 
-/*
-TODO: использовать связанный список. Тогда можно команды с высоким приоритетом вставлять. Ускорится FindBestQueuedCommand. Как next использовать индекс в s_cmdQueue;
-*/
 static bool QueueCommand(const uint8_t* data, uint8_t len, uint8_t prio, bool requiresLcdReady, bool isLcd)
 {
     if (data == nullptr || len == 0U || len > CMD_MAX_LEN)
