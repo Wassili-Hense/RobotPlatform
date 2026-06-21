@@ -1,5 +1,4 @@
 #include "hmi.h"
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <string.h>
@@ -7,17 +6,11 @@
 static constexpr uint8_t I2C_ADDR = 0x14;
 static constexpr int I2C_SDA = 21;
 static constexpr int I2C_SCL = 22;
-static constexpr uint8_t I2C_READ_LEN = 8;
-static constexpr uint8_t I2C_ITEM_COUNT_MAX = 4;
+static constexpr uint8_t I2C_READ_LEN = 6;
 
-static constexpr uint8_t APP_I2C_INDEX_STATUS  = 0;
-static constexpr uint8_t APP_I2C_INDEX_ADC_X   = 1;
-static constexpr uint8_t APP_I2C_INDEX_ADC_Y   = 2;
-static constexpr uint8_t APP_I2C_INDEX_BUTTONS = 3;
-
-static constexpr uint8_t STATUS_BIT_LCD_BUSY      = 0;
-static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 1;
-static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON  = 3;
+static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 12;
+static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON  = 14;
+static constexpr uint8_t STATUS_BIT_LCD_BUSY      = 15;
 
 static constexpr uint8_t CMD_BACKLIGHT_TIMEOUT    = 0x03;
 static constexpr uint8_t CMD_BACKLIGHT_BRIGHTNESS = 0x04;
@@ -51,7 +44,6 @@ static CmdItem s_cmdQueue[CMD_QUEUE_CAPACITY];
 static uint32_t s_cmdSeq = 1U;
 static bool s_lcdSendAllowed = false;
 static bool s_initialized = false;
-
 static uint32_t s_dataBits = 0U;
 static uint32_t s_changed = 0U;
 static uint16_t s_joyX = 0U;
@@ -66,7 +58,6 @@ static bool QueueCommand(const uint8_t* data, uint8_t len, uint8_t prio, bool re
     {
         return false;
     }
-
     for (size_t i = 0; i < CMD_QUEUE_CAPACITY; ++i)
     {
         if (!s_cmdQueue[i].used)
@@ -81,7 +72,6 @@ static bool QueueCommand(const uint8_t* data, uint8_t len, uint8_t prio, bool re
             return true;
         }
     }
-
     return false;
 }
 
@@ -90,7 +80,6 @@ static int FindBestQueuedCommand(void)
     int bestIndex = -1;
     uint8_t bestPrio = 0U;
     uint32_t bestSeq = 0xFFFFFFFFu;
-
     for (size_t i = 0; i < CMD_QUEUE_CAPACITY; ++i)
     {
         const CmdItem& item = s_cmdQueue[i];
@@ -109,7 +98,6 @@ static int FindBestQueuedCommand(void)
             bestSeq = item.seq;
         }
     }
-
     return bestIndex;
 }
 
@@ -129,80 +117,59 @@ static bool SendOneQueuedCommand(void)
     {
         return false;
     }
-
     if (item.isLcd)
     {
         s_lcdSendAllowed = false;
     }
-
     s_cmdQueue[index].used = false;
     return true;
 }
-
 
 static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value)
 {
     return (data & ~(1UL << idx)) | (((uint32_t)(value & 1U)) << idx);
 }
 
+static uint16_t read_le16(const uint8_t* p)
+{
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
 static bool ParsePacket(const uint8_t* rx)
 {
-    const uint8_t itemCount = (uint8_t)(rx[0] & 0x0F);
-    const uint8_t index0 = (uint8_t)(rx[0] >> 4);
-    if (index0 != APP_I2C_INDEX_STATUS || itemCount == 0U || itemCount > I2C_ITEM_COUNT_MAX)
-    {
-        return false;
-    }
-
-    const uint8_t expectedLen = (uint8_t)(2U + 2U * (itemCount - 1U));
-    if (expectedLen > I2C_READ_LEN)
-    {
-        return false;
-    }
+    const uint16_t word0 = read_le16(&rx[0]);
+    const uint16_t joyX  = (uint16_t)(read_le16(&rx[2]) & 0x0FFFU);
+    const uint16_t joyY  = (uint16_t)(read_le16(&rx[4]) & 0x0FFFU);
 
     uint32_t newData = s_dataBits;
 
-    newData = set_bit(newData, HMI_DATA_STAT_LCD_BUSY, (rx[1] & (1U << STATUS_BIT_LCD_BUSY)) ? 1U : 0U);
-    newData = set_bit(newData, HMI_DATA_STAT_USB_CONN, (rx[1] & (1U << STATUS_BIT_USB_CONNECTED)) ? 1U : 0U);
-    newData = set_bit(newData, HMI_DATA_STAT_BL_ON, (rx[1] & (1U << STATUS_BIT_BACKLIGHT_ON)) ? 1U : 0U);
+    newData = set_bit(newData, HMI_DATA_STAT_LCD_BUSY, (word0 & (1U << STATUS_BIT_LCD_BUSY)) ? 1U : 0U);
+    newData = set_bit(newData, HMI_DATA_STAT_USB_CONN, (word0 & (1U << STATUS_BIT_USB_CONNECTED)) ? 1U : 0U);
+    newData = set_bit(newData, HMI_DATA_STAT_BL_ON,    (word0 & (1U << STATUS_BIT_BACKLIGHT_ON)) ? 1U : 0U);
 
-    s_lcdSendAllowed = ((rx[1] & (1U << STATUS_BIT_LCD_BUSY)) == 0U);
+    s_lcdSendAllowed = ((word0 & (1U << STATUS_BIT_LCD_BUSY)) == 0U);
 
-    for (uint8_t i = 1U; i < itemCount; ++i)
+    if (s_joyX != joyX)
     {
-        const uint8_t off = (uint8_t)(2U + 2U * (i - 1U));
-        const uint8_t index = (uint8_t)(rx[off] >> 4);
-        const uint16_t value = (uint16_t)(((uint16_t)(rx[off] & 0x0FU) << 8) | rx[off + 1U]);
-
-        if (index == APP_I2C_INDEX_ADC_X)
-        {
-            if (s_joyX != value)
-            {
-                s_joyX = value;
-                newData = set_bit(newData, HMI_DATA_JOY_X, 1U);
-            }
-        }
-        else if (index == APP_I2C_INDEX_ADC_Y)
-        {
-            if (s_joyY != value)
-            {
-                s_joyY = value;
-                newData = set_bit(newData, HMI_DATA_JOY_Y, 1U);
-            }
-        }
-        else if (index == APP_I2C_INDEX_BUTTONS)
-        {
-            const uint32_t newButtons = (uint32_t)(value & 0x03FFU);
-            newData &= ~(0x03FFUL << (uint8_t)HMI_DATA_BTN_ON);
-            newData |=  (newButtons << (uint8_t)HMI_DATA_BTN_ON);
-        }
+        s_joyX = joyX;
+        newData = set_bit(newData, HMI_DATA_JOY_X, 1U);
     }
+
+    if (s_joyY != joyY)
+    {
+        s_joyY = joyY;
+        newData = set_bit(newData, HMI_DATA_JOY_Y, 1U);
+    }
+
+    const uint32_t newButtons = (uint32_t)(word0 & 0x03FFU);
+    newData &= ~(0x03FFUL << (uint8_t)HMI_DATA_BTN_ON);
+    newData |=  (newButtons << (uint8_t)HMI_DATA_BTN_ON);
 
     s_changed |= (s_dataBits ^ newData);
     s_dataBits = newData & ~((1UL << HMI_DATA_JOY_X) | (1UL << HMI_DATA_JOY_Y));
-
     return true;
 }
+
 static hmi_tick_result_t PollI2C(void)
 {
     uint8_t rx[I2C_READ_LEN];
@@ -349,13 +316,11 @@ bool hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_color, const ch
     {
         return false;
     }
-
     const size_t textLen = strlen(text);
     if (textLen > 26U)
     {
         return false;
     }
-
     uint8_t data[32] = { 0 };
     data[0] = CMD_LCD_DRAW_TEXT;
     data[1] = x;

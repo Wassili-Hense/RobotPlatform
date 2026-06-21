@@ -2,6 +2,8 @@
 #include <Preferences.h>
 #include "hmi.h"
 
+//#define DEBUG_I2C 1
+
 static constexpr uint32_t HMI_POLL_MS = 5;
 
 static constexpr uint16_t COLOR_BLACK  = 0x0000;
