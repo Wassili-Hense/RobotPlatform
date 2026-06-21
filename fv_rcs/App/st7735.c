@@ -75,16 +75,11 @@ typedef struct {
 typedef struct {
   uint8_t busy;
   ST7735_Command cmd;
-  union {
-    struct {
-      uint8_t currentRow;
-    } rect;
-    struct {
-      uint8_t index;
-      uint8_t cursorX;
-      uint8_t cursorY;
-    } text;
-  } state;
+  struct {
+    uint8_t index;
+    uint8_t cursorX;
+    uint8_t cursorY;
+  } text;
 } ST7735_ActiveJob;
 
 typedef struct {
@@ -140,8 +135,8 @@ static const uint8_t * const s_markers[ST7735_MARKER_COUNT] =
 
 static void ST7735_NotifyStatus(void) {
   if (s_queueCb != NULL) {
-    uint8_t value = s_queueWarn;
-    if (s_backlightApplied > 0U) value |= 0x08U;
+    uint8_t value = (uint8_t) (s_queueWarn ? 0x80U : 0U);
+    if (s_backlightApplied > 0U) value |= 0x40U;
     s_queueCb(value);
   }
 }
@@ -453,12 +448,11 @@ static uint8_t ST7735_StartNextCommand(void) {
   s_active.busy = 1U;
   switch ((ST7735_CommandType) s_active.cmd.type) {
   case ST7735_CMD_FILL_RECT:
-    s_active.state.rect.currentRow = 0U;
     break;
   case ST7735_CMD_DRAW_TEXT:
-    s_active.state.text.index = 0U;
-    s_active.state.text.cursorX = s_active.cmd.data.drawText.x;
-    s_active.state.text.cursorY = s_active.cmd.data.drawText.y;
+    s_active.text.index = 0U;
+    s_active.text.cursorX = s_active.cmd.data.drawText.x;
+    s_active.text.cursorY = s_active.cmd.data.drawText.y;
     break;
   case ST7735_CMD_DRAW_MARKER:
     break;
@@ -472,18 +466,11 @@ static uint8_t ST7735_StartNextCommand(void) {
 
 static uint8_t ST7735_ProcessRectLike(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
   if (s_tx.type == ST7735_TX_COLOR_REPEAT) {
-    if (!ST7735_ContinueColorRepeat()) return 0U;
-    s_active.state.rect.currentRow++;
-    return (s_active.state.rect.currentRow >= h) ? 1U : 0U;
+    return ST7735_ContinueColorRepeat();
   }
-  if (s_active.state.rect.currentRow >= h) return 1U;
-  ST7735_SetAddressWindow(x, (uint8_t) (y + s_active.state.rect.currentRow), (uint8_t) (x + w - 1U),
-      (uint8_t) (y + s_active.state.rect.currentRow));
-  if (ST7735_BeginColorRepeat(color, w)) {
-    s_active.state.rect.currentRow++;
-    return (s_active.state.rect.currentRow >= h) ? 1U : 0U;
-  }
-  return 0U;
+  if ((w == 0U) || (h == 0U)) return 1U;
+  ST7735_SetAddressWindow(x, y, (uint8_t) (x + w - 1U), (uint8_t) (y + h - 1U));
+  return ST7735_BeginColorRepeat(color, (uint16_t) ((uint16_t) w * (uint16_t) h));
 }
 
 static uint8_t ST7735_ProcessDrawTextStep(void) {
@@ -492,29 +479,29 @@ static uint8_t ST7735_ProcessDrawTextStep(void) {
 
   if (s_tx.type == ST7735_TX_BITMAP) {
     if (!ST7735_ContinueBitmapTransfer()) return 0U;
-    s_active.state.text.cursorX = (uint8_t) (s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH);
-    s_active.state.text.index++;
+    s_active.text.cursorX = (uint8_t) (s_active.text.cursorX + ST7735_TEXT_CELL_WIDTH);
+    s_active.text.index++;
     return 0U;
   }
-  ch = t->text[s_active.state.text.index];
+  ch = t->text[s_active.text.index];
   if (ch == '\0') {
     return 1U;
   }
   if (ch == '\n') {
-    s_active.state.text.cursorX = t->x;
-    s_active.state.text.cursorY = (uint8_t) (s_active.state.text.cursorY + FONT_7X10_HEIGHT);
-    s_active.state.text.index++;
+    s_active.text.cursorX = t->x;
+    s_active.text.cursorY = (uint8_t) (s_active.text.cursorY + FONT_7X10_HEIGHT);
+    s_active.text.index++;
     return 0U;
   }
-  if ((uint16_t) s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH > LCD_WIDTH) {
-    s_active.state.text.cursorX = t->x;
-    s_active.state.text.cursorY = (uint8_t) (s_active.state.text.cursorY + FONT_7X10_HEIGHT);
+  if ((uint16_t) s_active.text.cursorX + ST7735_TEXT_CELL_WIDTH > LCD_WIDTH) {
+    s_active.text.cursorX = t->x;
+    s_active.text.cursorY = (uint8_t) (s_active.text.cursorY + FONT_7X10_HEIGHT);
   }
-  if ((uint16_t) s_active.state.text.cursorY + FONT_7X10_HEIGHT > LCD_HEIGHT) return 1U;
-  if (ST7735_BeginBitmapTransfer(s_active.state.text.cursorX, s_active.state.text.cursorY,
+  if ((uint16_t) s_active.text.cursorY + FONT_7X10_HEIGHT > LCD_HEIGHT) return 1U;
+  if (ST7735_BeginBitmapTransfer(s_active.text.cursorX, s_active.text.cursorY,
       ST7735_TEXT_CELL_WIDTH, FONT_7X10_HEIGHT, ST7735_BuildCharBitmap(ch, t->color, s_bgColor)) != 0U) {
-    s_active.state.text.cursorX = (uint8_t) (s_active.state.text.cursorX + ST7735_TEXT_CELL_WIDTH);
-    s_active.state.text.index++;
+    s_active.text.cursorX = (uint8_t) (s_active.text.cursorX + ST7735_TEXT_CELL_WIDTH);
+    s_active.text.index++;
   }
   return 0U;
 }
@@ -891,7 +878,7 @@ uint8_t LCD_Process(void) {
   if (done != 0U) {
     s_active.busy = 0U;
     s_active.cmd.type = ST7735_CMD_NONE;
-    memset(&s_active.state, 0, sizeof(s_active.state));
+    memset(&s_active.text, 0, sizeof(s_active.text));
     s_tx.type = ST7735_TX_NONE;
   }
   return 1U;

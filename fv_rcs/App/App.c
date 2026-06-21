@@ -1,5 +1,4 @@
 #include "App.h"
-
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
@@ -11,19 +10,15 @@
 #include "inputs.h"
 #include "st7735.h"
 
-#define APP_ADC_FORCE_SEND_MS          5000U
-#define APP_ADC_DELTA                    15U
-#define APP_I2C_ITEM_COUNT              4U
-#define APP_POWER_OFF_COUNT            1000U
-
-#define APP_ABS_DIFF_U16(a, b) (((a) >= (b)) ? ((a) - (b)) : ((b) - (a)))
-
-enum {
-  APP_I2C_INDEX_STATUS = 0,
-  APP_I2C_INDEX_ADC_X = 1,
-  APP_I2C_INDEX_ADC_Y = 2,
-  APP_I2C_INDEX_BUTTONS = 3
-};
+#define APP_I2C_PACKET_SIZE             6U
+#define APP_I2C_STATUS_BUTTONS_MASK_LO  0xFFU
+#define APP_I2C_STATUS_BUTTONS_MASK_HI  0x03U
+#define APP_I2C_STATUS_USB_MASK         0x10U
+#define APP_I2C_STATUS_LCD_BL_MASK      0x40U
+#define APP_I2C_STATUS_LCD_BUSY_MASK    0x80U
+#define APP_I2C_ADC_VALUE_MASK          0x0FFFU
+#define APP_I2C_ADC_CHANGED_MASK        0x8000U
+#define APP_POWER_OFF_COUNT          1000U
 
 enum {
   APP_RX_CMD_LCD_SET_BL_TIMEOUT = 0x03,
@@ -39,87 +34,73 @@ enum {
 };
 
 /* -------------------------------------------------------------------------- */
-/* I2C state                                                                  */
-/* -------------------------------------------------------------------------- */
-static volatile uint8_t s_i2cDirty[APP_I2C_ITEM_COUNT];
-static volatile uint16_t s_i2cActualValue[APP_I2C_ITEM_COUNT];
-static volatile uint16_t s_i2cSentValue[APP_I2C_ITEM_COUNT];
-static volatile uint32_t s_i2cTick[APP_I2C_ITEM_COUNT];
-
-/* -------------------------------------------------------------------------- */
 /* App state                                                                  */
 /* -------------------------------------------------------------------------- */
 static volatile uint8_t s_toneBusy = 0U;
 static volatile uint32_t s_toneStopTick = 0U;
 static uint32_t s_lastAppTick = 0U;
 static uint8_t s_indicatorValue[2] = { 0U, 0U };
+static volatile uint8_t s_i2cPacket[APP_I2C_PACKET_SIZE] = { 0U, 0U, 0U, 0U, 0U, 0U };
 
 /* -------------------------------------------------------------------------- */
-/* I2C callbacks and data preparation                                         */
+/* I2C packet helpers                                                         */
 /* -------------------------------------------------------------------------- */
-/* Request packet: [0|count][status_lo][idx1|value1_hi][value1_lo]... */
-static void App_PrepareDigitalForI2c(uint8_t index, uint16_t value) {
-  if (index >= APP_I2C_ITEM_COUNT) return;
-
-  s_i2cActualValue[index] = value;
-  if (s_i2cSentValue[index] != value) s_i2cDirty[index] = 1U;
+static void App_I2cPacketSetWord(uint8_t offset, uint16_t value) {
+  s_i2cPacket[offset] = (uint8_t) (value & 0xFFU);
+  s_i2cPacket[offset + 1U] = (uint8_t) (value >> 8);
 }
 
-static uint8_t App_ProcessAnalogForI2c(uint8_t adcChannel, uint8_t index) {
-  uint8_t adcChanged;
+static void App_SetButtonsForI2c(uint16_t buttons) {
+  s_i2cPacket[0] = (uint8_t) (buttons & APP_I2C_STATUS_BUTTONS_MASK_LO);
+  s_i2cPacket[1] = (uint8_t) ((s_i2cPacket[1] & (uint8_t) ~APP_I2C_STATUS_BUTTONS_MASK_HI) |
+      ((buttons >> 8) & APP_I2C_STATUS_BUTTONS_MASK_HI));
+}
 
-  if (index >= APP_I2C_ITEM_COUNT) return 0U;
-
-  adcChanged = Inp_AdcisChanged(adcChannel);
-
-  if (adcChanged) {
-    s_i2cActualValue[index] = Inp_AiGet(adcChannel);
-    if (!s_i2cDirty[index] && (APP_ABS_DIFF_U16(s_i2cActualValue[index], s_i2cSentValue[index]) > APP_ADC_DELTA)) s_i2cDirty[index] = 1U;
+static void App_SetUsbConnectedForI2c(uint8_t connected) {
+  if (connected != 0U) {
+    s_i2cPacket[1] |= APP_I2C_STATUS_USB_MASK;
+  } else {
+    s_i2cPacket[1] &= (uint8_t) ~APP_I2C_STATUS_USB_MASK;
   }
-
-  if (!s_i2cDirty[index] && ((int32_t) (HAL_GetTick() - s_i2cTick[index]) >= 0)) s_i2cDirty[index] = 1U;
-
-  return adcChanged;
 }
 
+static void App_SetLcdFlagsForI2c(uint8_t value) {
+  s_i2cPacket[1] = (uint8_t) ((s_i2cPacket[1] & (uint8_t) ~(APP_I2C_STATUS_LCD_BL_MASK | APP_I2C_STATUS_LCD_BUSY_MASK)) |
+      (value & (APP_I2C_STATUS_LCD_BL_MASK | APP_I2C_STATUS_LCD_BUSY_MASK)));
+}
+
+static uint8_t App_UpdateAdcWordForI2c(uint8_t adcChannel, uint8_t packetOffset) {
+  uint16_t value = (uint16_t) Inp_AiGet(adcChannel) & APP_I2C_ADC_VALUE_MASK;
+  uint8_t ch = Inp_AdcisChanged(adcChannel)!= 0U;
+  if (ch ) {
+    value |= APP_I2C_ADC_CHANGED_MASK;
+  }
+  App_I2cPacketSetWord(packetOffset, value);
+  return ch;
+}
+
+/* -------------------------------------------------------------------------- */
+/* I2C callbacks                                                              */
+/* -------------------------------------------------------------------------- */
 static uint8_t App_DrawIndicator(uint8_t index) {
-  if (index > 1) return 2;
+  if (index > 1U) return 2U;
   return LCD_DrawIndicator(index, s_indicatorValue[index]);
 }
+
 static void App_LcdQueueCallback(uint8_t value) {
-  uint16_t status = s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FF6U;
-
-  status |= (uint16_t) (value & 0x09U);
-  App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, status);
+  App_SetLcdFlagsForI2c(value);
 }
-// outData length 32
+
+/* outData length 32 */
 static uint8_t App_I2cRequestCallback(uint8_t *outData) {
-  const uint8_t outLen = APP_I2C_ITEM_COUNT*2U;
-  uint8_t i;
-  uint8_t count = 0U;
-  uint8_t outIndex = 1U;
-  uint32_t now = HAL_GetTick();
-
-  if (outData == 0U) return 0U;
-
-  for (i = 0U; i < APP_I2C_ITEM_COUNT; i++){
-    if ((i == APP_I2C_INDEX_STATUS) || (s_i2cDirty[i] != 0U)) {
-      uint16_t value = s_i2cActualValue[i];
-      if(i != APP_I2C_INDEX_STATUS){
-        outData[outIndex++] = (uint8_t)((i << 4) | ((value >> 8) & 0x0FU));
-      }
-      outData[outIndex++] = (uint8_t)value;
-      s_i2cDirty[i] = 0U;
-      s_i2cSentValue[i] = s_i2cActualValue[i];
-      s_i2cTick[i] = now + APP_ADC_FORCE_SEND_MS;
-
-      count++;
-    }
-  }
-
-  outData[0] = (uint8_t)(count & 0x0FU);
-
-  return outLen;
+  if (outData == 0) return 0U;
+  outData[0] = s_i2cPacket[0];
+  outData[1] = s_i2cPacket[1];
+  outData[2] = s_i2cPacket[2];
+  outData[3] = s_i2cPacket[3];
+  outData[4] = s_i2cPacket[4];
+  outData[5] = s_i2cPacket[5];
+  return APP_I2C_PACKET_SIZE;
 }
 
 static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
@@ -136,7 +117,8 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
 
   case APP_RX_CMD_LCD_SET_BL_TIMEOUT:
     if (size >= 5U) {
-      uint32_t timeoutMs = (uint32_t) data[1] | ((uint32_t) data[2] << 8) | ((uint32_t) data[3] << 16) | ((uint32_t) data[4] << 24);
+      uint32_t timeoutMs = (uint32_t) data[1] | ((uint32_t) data[2] << 8) |
+          ((uint32_t) data[3] << 16) | ((uint32_t) data[4] << 24);
       LCD_SetBacklightTimeout(timeoutMs);
     }
     break;
@@ -164,7 +146,6 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
   case APP_RX_CMD_LCD_DRAW_MARKER:
     if (size >= 6U) {
       uint16_t color = (uint16_t) data[4] | ((uint16_t) data[5] << 8);
-
       (void) LCD_DrawMarker(data[1], data[2], data[3], color);
     }
     break;
@@ -172,7 +153,7 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
   case APP_RX_CMD_LCD_DRAW_TEXT:
     if (size >= 6U) {
       uint16_t color = (uint16_t) data[3] | ((uint16_t) data[4] << 8);
-      if ((data[size - 1U] != 0U)) data[size - 1U] = 0U;
+      if (data[size - 1U] != 0U) data[size - 1U] = 0U;
       (void) LCD_DrawText(data[1], data[2], (const char*) &data[5], color);
     }
     break;
@@ -180,17 +161,18 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
   case APP_RX_CMD_LCD_SET_BG_COLOR:
     if (size >= 3U) {
       uint16_t color = (uint16_t) data[1] | ((uint16_t) data[2] << 8);
-
       LCD_SetBackgroundColor(color);
     }
     break;
 
   case APP_RX_CMD_LCD_DRAW_INDICATOR:
     if ((size >= 3U) && (data[1] <= 1U)) {
-      s_indicatorValue[data[1]] = (data[1] == 1 ? (s_indicatorValue[data[1]] & 2) : 0) | (data[2] ? 1U : 0U);
+      s_indicatorValue[data[1]] =
+          (uint8_t) ((data[1] == 1U ? (s_indicatorValue[data[1]] & 2U) : 0U) | (data[2] ? 1U : 0U));
       (void) App_DrawIndicator(data[1]);
     }
     break;
+
   case APP_RX_CMD_LCD_DRAW_PROGRESS_BAR:
     if ((size >= 3U) && (data[1] <= 2U)) {
       (void) LCD_DrawProgressBar(data[1], data[2]);
@@ -203,33 +185,28 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
 }
 
 static void App_ResetI2cState(void) {
-  uint8_t i;
-
-  for (i = 0U; i < APP_I2C_ITEM_COUNT; i++) {
-    s_i2cDirty[i] = 0U;
-    s_i2cActualValue[i] = 0U;
-    s_i2cSentValue[i] = 0U;
-    s_i2cTick[i] = 0U;
-  }
+  s_i2cPacket[0] = 0U;
+  s_i2cPacket[1] = 0U;
+  s_i2cPacket[2] = 0U;
+  s_i2cPacket[3] = 0U;
+  s_i2cPacket[4] = 0U;
+  s_i2cPacket[5] = 0U;
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tone
- * divider = 1000000 / Freq                                       */
+/* Tone                                                                       */
+/* divider = 1000000 / Freq                                                   */
 /* -------------------------------------------------------------------------- */
 void Tone(uint16_t divider, uint16_t delay_ms) {
   if (htim1.State == HAL_TIM_STATE_RESET) return;
-
   HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
   if (delay_ms == 0U) {
     s_toneBusy = 0U;
     return;
   }
-
   s_toneStopTick = HAL_GetTick() + delay_ms;
   s_toneBusy = 1U;
   if (divider == 0U) return;
-
   __HAL_TIM_SET_AUTORELOAD(&htim1, divider);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, divider / 16U);
   __HAL_TIM_SET_COUNTER(&htim1, 0U);
@@ -239,7 +216,6 @@ void Tone(uint16_t divider, uint16_t delay_ms) {
 
 static void App_ProcessTone(void) {
   if (s_toneBusy == 0U) return;
-
   if ((int32_t) (HAL_GetTick() - s_toneStopTick) >= 0) {
     HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
     s_toneBusy = 0U;
@@ -265,7 +241,7 @@ static void App_ProcessPower(void) {
         Tone(500U, 60U);
       }
     }
-  } else if ((s_i2cActualValue[APP_I2C_INDEX_BUTTONS] & 0x0001U) != 0U) {
+  } else if ((s_i2cPacket[0] & 0x01U) != 0U) {
     offCounter++;
     if (offCounter > APP_POWER_OFF_COUNT) {
       if (offCounter == (APP_POWER_OFF_COUNT + 2U)) {
@@ -290,11 +266,9 @@ static void App_ProcessPower(void) {
 /* Ubat ≈ ADC_V * 0.00399446 - 0.19284 */
 static const uint16_t ocv_adc[] =
   { 850, 874, 919, 940, 965, 975, 982, 990, 1002, 1010, 1015, 1022, 1030 };
-
 /* SOC * 0.7 for progress bar (0..70) */
 static const uint8_t ocv_soc[] =
   { 0, 4, 14, 21, 31, 35, 39, 42, 49, 53, 56, 63, 69 };
-
 #define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
 
 static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2) {
@@ -321,7 +295,6 @@ static uint8_t adc_to_soc(uint16_t adc) {
       low = mid;
     }
   }
-
   return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
 }
 
@@ -329,13 +302,15 @@ static uint8_t adc_to_soc(uint16_t adc) {
 /* ADC service                                                                */
 /* -------------------------------------------------------------------------- */
 static void App_ProcessAdc(void) {
-  if (Inp_AdcEnsureStarted()) {
-  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_X, APP_I2C_INDEX_ADC_X)) {
-  } else if (App_ProcessAnalogForI2c(ADC_INPUT_CH_Y, APP_I2C_INDEX_ADC_Y)) {
-  } else if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
-    uint8_t usb_conn = ((Inp_AiGet(ADC_INPUT_CH_U) > 1000U) ? 2U : 0U);
-    App_PrepareDigitalForI2c(APP_I2C_INDEX_STATUS, usb_conn | (s_i2cActualValue[APP_I2C_INDEX_STATUS] & 0x0FFD));
-    s_indicatorValue[1] = usb_conn | (s_indicatorValue[1] & 1);
+  if (Inp_AdcEnsureStarted()) return;
+
+  uint8_t ch_x = App_UpdateAdcWordForI2c(ADC_INPUT_CH_X, 2U);
+  if(App_UpdateAdcWordForI2c(ADC_INPUT_CH_Y, 4U) || ch_x) return;
+
+  if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
+    uint8_t usbConnected = (Inp_AiGet(ADC_INPUT_CH_U) > 1000U) ? 1U : 0U;
+    App_SetUsbConnectedForI2c(usbConnected);
+    s_indicatorValue[1] = (uint8_t) ((usbConnected ? 2U : 0U) | (s_indicatorValue[1] & 1U));
     (void) App_DrawIndicator(1U);
   } else if (Inp_AdcisChanged(ADC_INPUT_CH_V) != 0U) {
     (void) LCD_DrawProgressBar(3U, adc_to_soc(Inp_AiGet(ADC_INPUT_CH_V)));
@@ -346,7 +321,6 @@ static void App_ProcessAdc(void) {
 /* App lifecycle                                                              */
 /* -------------------------------------------------------------------------- */
 void App_Init(void) {
-
   App_ResetI2cState();
   Inp_Init();
   I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
@@ -376,13 +350,14 @@ void App_Run(void) {
   if (now != s_lastAppTick) {
     uint16_t buttons = 0U;
     uint8_t i;
+
     s_lastAppTick++;
     for (i = 0U; i < INPUT_BUTTON_COUNT; i++) {
       if (Inp_DiGet(i) != 0U) {
-        buttons |= (uint16_t)(1U << i);
+        buttons |= (uint16_t) (1U << i);
       }
     }
-    App_PrepareDigitalForI2c(APP_I2C_INDEX_BUTTONS, buttons);
+    App_SetButtonsForI2c(buttons);
     if (buttons != 0U) {
       LCD_SetBacklightTimeout(15000U);
     }

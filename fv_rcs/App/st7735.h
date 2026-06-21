@@ -24,9 +24,9 @@ extern "C" {
 #define LCD_MAGENTA 0xF81FU
 
 /* Queue/status callback value bits:
- * bit0 = 1 -> after push only 2 free slots left
- * bit0 = 0 -> after pop 3 free slots available or queue reset
- * bit3 = current backlight status (1 = on, 0 = off)
+ * bit7 = 1 -> after push only 2 free slots left
+ * bit7 = 0 -> after pop 3 free slots available or queue reset
+ * bit6 = current backlight status (1 = on, 0 = off)
  */
 typedef void (*LCD_QueueCallback)(uint8_t value);
 
