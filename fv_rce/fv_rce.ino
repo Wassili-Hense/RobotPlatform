@@ -1,1185 +1,290 @@
+#define DEBUG_HMI
+
 #include <Arduino.h>
-#include <Preferences.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
+
 #include "hmi.h"
+#include "hmi_helpers.h"
 
-static constexpr uint32_t HMI_POLL_MS = 5;
+static constexpr uint32_t HMI_TICK_PERIOD_MS = 5U;
+static constexpr uint32_t TONE_BASE_HZ = 1000000UL;
+static constexpr size_t SERIAL_LINE_CAP = 32U;
 
-static constexpr uint16_t COLOR_BLACK = 0x0000;
-static constexpr uint16_t COLOR_WHITE = 0xFFFF;
-static constexpr uint16_t COLOR_GREEN = 0x07E0;
-static constexpr uint16_t COLOR_BLUE = 0x001F;
-static constexpr uint16_t COLOR_YELLOW = 0xFFE0;
-static constexpr uint16_t COLOR_CYAN = 0x07FF;
+static hmiq_cmd_t s_hmiqUsbSt = HMIQ_INDICATOR(1);
+static hmiq_cmd_t s_hmiqRfSt   = HMIQ_INDICATOR(0);
+static hmiq_cmd_t s_hmiqBattery    = HMIQ_PROGRESS(0);
+static hmiq_cmd_t s_hmiqRssiRx    = HMIQ_PROGRESS(1);
+static hmiq_cmd_t s_hmiqRssiTx    = HMIQ_PROGRESS(2);
+static hmiq_cmd_t s_cmdBeep         = HMIQ_BEEP();
 
-static constexpr int JOY_AREA_X0 = 45;
-static constexpr int JOY_AREA_Y0 = 10;
-static constexpr int JOY_AREA_X1 = 114;
-static constexpr int JOY_AREA_Y1 = 79;
-
-static constexpr uint32_t MENU_INACTIVITY_MS = 60000UL;
-static constexpr uint32_t MENU_TIMEOUT_REFRESH_MS = 10000UL;
-static constexpr uint32_t MENU_TIMEOUT_VALUE_MS = 15000UL;
-
-static constexpr uint8_t MAX_TEXT_LEN = 26;
-
-struct AxisCal {
-  uint16_t min = 0;
-  uint16_t cMin = 1955;
-  uint16_t cMax = 1956;
-  uint16_t max = 4095;
+static hmiq_cmd_t* s_hmiSys[] = {
+    &s_hmiqUsbSt,
+    &s_hmiqRfSt,
+    &s_hmiqBattery,
+    &s_hmiqRssiRx,
+    &s_hmiqRssiTx,
+    &s_cmdBeep
 };
 
-struct ButtonEvents {
-  bool anyChange = false;
-  bool okRise = false;
-  bool backRise = false;
-  bool upRise = false;
-  bool downRise = false;
-  bool lupRise = false;
-  bool ldnRise = false;
-};
+static uint32_t s_nextHmiTickMs = 0U;
+static bool s_serialStarted = false;
+static char s_serialLine[SERIAL_LINE_CAP];
+static size_t s_serialLineLen = 0U;
 
-enum UiMode : uint8_t {
-  UI_NORMAL = 0,
-  UI_MENU,
-  UI_CAL_CENTER,
-  UI_CAL_EDGE,
-};
-
-enum MenuItem : uint8_t {
-  MENU_CAL_CENTER = 0,
-  MENU_CAL_EDGE = 1,
-  MENU_ITEM_COUNT = 2,
-};
-
-enum SceneId : uint8_t {
-  SCENE_NORMAL = 0,
-  SCENE_MENU,
-  SCENE_CAL_CENTER,
-  SCENE_CAL_EDGE,
-  SCENE_COUNT,
-};
-
-struct OneShotClearComponent {
-  bool pending = false;
-  uint16_t color = COLOR_BLACK;
-};
-
-struct TextComponent {
-  bool active = false;
-  uint8_t x = 0;
-  uint8_t y = 0;
-  uint16_t desiredColor = COLOR_WHITE;
-  uint16_t renderedColor = COLOR_WHITE;
-  char desiredText[MAX_TEXT_LEN + 1]{};
-  char renderedText[MAX_TEXT_LEN + 1]{};
-  bool renderedValid = false;
-};
-
-struct IndicatorComponent {
-  uint8_t index = 0;
-  bool desired = false;
-  bool rendered = false;
-  bool renderedValid = false;
-};
-
-struct ProgressComponent {
-  uint8_t index = 0;
-  uint8_t desired = 0;
-  uint8_t rendered = 0;
-  bool renderedValid = false;
-};
-
-struct ValueCommandComponent {
-  uint8_t desiredValue = 0;
-  uint8_t renderedValue = 0;
-  bool renderedValid = false;
-};
-
-struct TimeoutCommandComponent {
-  uint32_t desiredValue = 0;
-  uint32_t renderedValue = 0;
-  bool renderedValid = false;
-};
-
-enum MarkerPhase : uint8_t {
-  MARKER_IDLE = 0,
-  MARKER_ERASE,
-  MARKER_DRAW,
-};
-
-struct MarkerComponent {
-  bool active = false;
-  bool desiredVisible = false;
-  bool eraseOnMove = true;
-  uint8_t desiredX = 0;
-  uint8_t desiredY = 0;
-  uint8_t desiredIndex = 0;
-  uint16_t desiredColor = COLOR_WHITE;
-
-  bool currentVisible = false;
-  uint8_t currentX = 0;
-  uint8_t currentY = 0;
-  uint8_t currentIndex = 0;
-  uint16_t currentColor = COLOR_WHITE;
-
-  MarkerPhase phase = MARKER_IDLE;
-};
-
-struct ComponentEntry {
-  bool (*step)(void* ctx);
-  void* ctx;
-};
-
-static Preferences s_prefs;
-static bool s_prefsOpened = false;
-static uint32_t s_nextPollMs = 0;
-static uint32_t s_lastMenuActivityMs = 0;
-static uint32_t s_lastMenuTimeoutRefreshMs = 0;
-static String s_serialLine;
-static bool s_usbConnected = false;
-static bool s_hmiDataValid = false;
-static bool s_debugSerialForced = false;
-static UiMode s_uiMode = UI_NORMAL;
-static SceneId s_scene = SCENE_NORMAL;
-static uint8_t s_menuIndex = MENU_CAL_CENTER;
-static uint8_t s_brightnessStep = 7;
-static AxisCal s_calX{ 177, 1955, 1956, 4025 };
-static AxisCal s_calY{ 0, 1958, 1959, 4027 };
-static AxisCal s_tmpCalX;
-static AxisCal s_tmpCalY;
-
-static OneShotClearComponent s_sceneClear;
-static TextComponent s_menuTitleText;
-static TextComponent s_menuItemTexts[MENU_ITEM_COUNT];
-static TextComponent s_brightnessText;
-static TextComponent s_calCenterLeftText;
-static TextComponent s_calCenterRightText;
-static TextComponent s_calEdgeLeftText;
-static TextComponent s_calEdgeRightText;
-static IndicatorComponent s_usbIndicator{ 1, false, false, false };
-static IndicatorComponent s_rfIndicator{ 0, false, false, false };
-static ProgressComponent s_progress[3] = { { 0, 0, 0, false }, { 1, 0, 0, false }, { 2, 0, 0, false } };
-static ValueCommandComponent s_brightnessCmd;
-static TimeoutCommandComponent s_backlightTimeoutCmd;
-static MarkerComponent s_normalMarker;
-static MarkerComponent s_calMarker;
-
-static const char* kButtonNames[10] = {
-  "ON", "Fire", "UP", "DOWN", "BACK", "OK", "LUP", "LDN", "RUP", "RDN"
-};
-static const uint8_t kBrightnessLevels[11] = { 1, 2, 3, 5, 8, 13, 20, 32, 50, 79, 127 };
-
-static bool StepClear(void* ctx);
-static bool StepText(void* ctx);
-static bool StepIndicator(void* ctx);
-static bool StepProgress(void* ctx);
-static bool StepBrightnessCmd(void* ctx);
-static bool StepTimeoutCmd(void* ctx);
-static bool StepMarker(void* ctx);
-
-static ComponentEntry s_globalComponents[] = {
-  { StepBrightnessCmd, &s_brightnessCmd },
-  { StepTimeoutCmd, &s_backlightTimeoutCmd },
-  { StepIndicator, &s_usbIndicator },
-  { StepIndicator, &s_rfIndicator },
-  { StepProgress, &s_progress[0] },
-  { StepProgress, &s_progress[1] },
-  { StepProgress, &s_progress[2] },
-};
-
-static ComponentEntry s_sceneNormal[] = {
-  { StepClear, &s_sceneClear },
-  { StepMarker, &s_normalMarker },
-};
-
-static ComponentEntry s_sceneMenu[] = {
-  { StepClear, &s_sceneClear },
-  { StepText, &s_menuTitleText },
-  { StepText, &s_menuItemTexts[0] },
-  { StepText, &s_menuItemTexts[1] },
-  { StepText, &s_brightnessText },
-};
-
-static ComponentEntry s_sceneCalCenter[] = {
-  { StepClear, &s_sceneClear },
-  { StepText, &s_calCenterLeftText },
-  { StepText, &s_calCenterRightText },
-  { StepMarker, &s_calMarker },
-};
-
-static ComponentEntry s_sceneCalEdge[] = {
-  { StepClear, &s_sceneClear },
-  { StepText, &s_calEdgeLeftText },
-  { StepText, &s_calEdgeRightText },
-  { StepMarker, &s_calMarker },
-};
-
-static bool SerialEnabled(void) {
-#ifdef DEBUG_I2C
-  return s_usbConnected || s_debugSerialForced;
-#else
-  return s_usbConnected;
-#endif
-}
-
-static void DebugEnsureSerialOnError(void) {
-#ifdef DEBUG_I2C
-  if (!s_debugSerialForced) {
-    Serial.begin(115200);
-    delay(20);
-    s_debugSerialForced = true;
-  }
-#endif
-}
-
-static void DebugLogHmiErrors(hmi_tick_result_t err) {
-#ifdef DEBUG_I2C
-  if (err == HMI_TICK_OK) {
-    return;
-  }
-  DebugEnsureSerialOnError();
-  if (!Serial) {
-    return;
-  }
-  char line[160];
-  snprintf(line, sizeof(line),
-           "HMI err:%04X%s%s%s%s%s",
-           (unsigned)err,
-           (err & HMI_TICK_ERR_NOT_INITIALIZED) ? " NOT_INIT" : "",
-           (err & HMI_TICK_ERR_I2C_REQUEST) ? " I2C_REQ" : "",
-           (err & HMI_TICK_ERR_I2C_READ) ? " I2C_READ" : "",
-           (err & HMI_TICK_ERR_BAD_PACKET) ? " BAD_PKT" : "",
-           (err & HMI_TICK_ERR_TX) ? " TX" : "");
-  Serial.println(line);
-#else
-  (void)err;
-#endif
-}
-
-static uint8_t BrightnessLevel(void) {
-  return kBrightnessLevels[s_brightnessStep];
-}
-
-static uint8_t DimmedBrightnessLevel(void) {
-  const uint8_t full = BrightnessLevel();
-  return (uint8_t)max(1, (int)full / 2);
-}
-
-static bool ButtonPressed(hmi_data_idx_t idx) {
-  return hmi_get(idx) != 0U;
-}
-
-static uint16_t CurrentRawX(void) {
-  return hmi_get(HMI_DATA_JOY_X);
-}
-
-static uint16_t CurrentRawY(void) {
-  return hmi_get(HMI_DATA_JOY_Y);
-}
-
-static bool CurrentBacklightOn(void) {
-  return hmi_get(HMI_DATA_STAT_BL_ON) != 0U;
-}
-
-static bool CurrentJoyValid(void) {
-  return s_hmiDataValid;
-}
-
-static void OpenPrefs(void) {
-  if (!s_prefsOpened) {
-    s_prefs.begin("ui", false);
-    s_prefsOpened = true;
-  }
-}
-
-static void LoadPrefs(void) {
-  OpenPrefs();
-  s_brightnessStep = s_prefs.getUChar("bl_step", 7);
-  if (s_brightnessStep > 10) {
-    s_brightnessStep = 10;
-  }
-  s_calX.min = s_prefs.getUShort("x_min", 177);
-  s_calX.cMin = s_prefs.getUShort("x_cmin", 1955);
-  s_calX.cMax = s_prefs.getUShort("x_cmax", 1956);
-  s_calX.max = s_prefs.getUShort("x_max", 4025);
-  s_calY.min = s_prefs.getUShort("y_min", 0);
-  s_calY.cMin = s_prefs.getUShort("y_cmin", 1958);
-  s_calY.cMax = s_prefs.getUShort("y_cmax", 1959);
-  s_calY.max = s_prefs.getUShort("y_max", 4027);
-}
-
-static void SaveBrightnessPrefs(void) {
-  OpenPrefs();
-  s_prefs.putUChar("bl_step", s_brightnessStep);
-}
-
-static void SaveCalibrationPrefs(void) {
-  OpenPrefs();
-  s_prefs.putUShort("x_min", s_calX.min);
-  s_prefs.putUShort("x_cmin", s_calX.cMin);
-  s_prefs.putUShort("x_cmax", s_calX.cMax);
-  s_prefs.putUShort("x_max", s_calX.max);
-  s_prefs.putUShort("y_min", s_calY.min);
-  s_prefs.putUShort("y_cmin", s_calY.cMin);
-  s_prefs.putUShort("y_cmax", s_calY.cMax);
-  s_prefs.putUShort("y_max", s_calY.max);
-}
-
-static float MapAxisRawToNorm(uint16_t raw, const AxisCal& cal) {
-  if (raw <= cal.cMin) {
-    const int32_t denom = (int32_t)cal.cMin - (int32_t)cal.min;
-    if (denom <= 0) {
-      return -1.0f;
+static void EnsureSerialStarted(void)
+{
+    if (!s_serialStarted)
+    {
+        Serial.begin(115200);
+        s_serialStarted = true;
     }
-    float t = (float)((int32_t)raw - (int32_t)cal.min) / (float)denom;
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
-    return t - 1.0f;
-  }
-  if (raw < cal.cMax) {
-    return 0.0f;
-  }
-  const int32_t denom = (int32_t)cal.max - (int32_t)cal.cMax;
-  if (denom <= 0) {
-    return 1.0f;
-  }
-  float t = (float)((int32_t)raw - (int32_t)cal.cMax) / (float)denom;
-  if (t < 0.0f) t = 0.0f;
-  if (t > 1.0f) t = 1.0f;
-  return t;
 }
 
-static float GetNormX(void) {
-  return MapAxisRawToNorm(CurrentRawX(), s_calX);
-}
-
-static float GetNormY(void) {
-  return -MapAxisRawToNorm(CurrentRawY(), s_calY);
-}
-
-static int NormToPixel(float v, int lo, int hi) {
-  if (v < -1.0f) v = -1.0f;
-  if (v > 1.0f) v = 1.0f;
-  const float t = (v + 1.0f) * 0.5f;
-  return lo + (int)lroundf(t * (float)(hi - lo));
-}
-
-static int MapRawWindowToPixel(uint16_t raw, int center, int width, int px0, int px1) {
-  int half = width / 2;
-  if (half < 1) {
-    half = 1;
-  }
-  const int left = center - half;
-  const int right = center + half;
-  if ((int)raw <= left) {
-    return px0;
-  }
-  if ((int)raw >= right) {
-    return px1;
-  }
-  const float t = (float)((int)raw - left) / (float)(right - left);
-  return px0 + (int)lroundf(t * (float)(px1 - px0));
-}
-
-static int MapRawFullToPixel(uint16_t raw, int px0, int px1) {
-  float t = (float)raw / 4095.0f;
-  if (t < 0.0f) t = 0.0f;
-  if (t > 1.0f) t = 1.0f;
-  return px0 + (int)lroundf(t * (float)(px1 - px0));
-}
-
-static const char* FirstPressedButtonName(void) {
-  if (ButtonPressed(HMI_DATA_BTN_ON)) return kButtonNames[0];
-  if (ButtonPressed(HMI_DATA_BTN_FIRE)) return kButtonNames[1];
-  if (ButtonPressed(HMI_DATA_BTN_UP)) return kButtonNames[2];
-  if (ButtonPressed(HMI_DATA_BTN_DOWN)) return kButtonNames[3];
-  if (ButtonPressed(HMI_DATA_BTN_BACK)) return kButtonNames[4];
-  if (ButtonPressed(HMI_DATA_BTN_OK)) return kButtonNames[5];
-  if (ButtonPressed(HMI_DATA_BTN_LUP)) return kButtonNames[6];
-  if (ButtonPressed(HMI_DATA_BTN_LDN)) return kButtonNames[7];
-  if (ButtonPressed(HMI_DATA_BTN_RUP)) return kButtonNames[8];
-  if (ButtonPressed(HMI_DATA_BTN_RDN)) return kButtonNames[9];
-  return "";
-}
-
-static void PrintPacketLine(void) {
-#ifdef DEBUG_I2C
-  if (!SerialEnabled()) {
-    return;
-  }
-  char line[96];
-  snprintf(line, sizeof(line), "%.3f %.3f %s", GetNormX(), GetNormY(), FirstPressedButtonName());
-  Serial.println(line);
-#endif
-}
-
-static void PrintCalibrationState(const char* tag) {
-  if (!SerialEnabled() || tag == nullptr) {
-    return;
-  }
-  char line[160];
-  snprintf(line, sizeof(line), "%s X[min=%u cMin=%u cMax=%u max=%u] Y[min=%u cMin=%u cMax=%u max=%u]",
-           tag,
-           s_calX.min, s_calX.cMin, s_calX.cMax, s_calX.max,
-           s_calY.min, s_calY.cMin, s_calY.cMax, s_calY.max);
-  Serial.println(line);
-}
-
-static void str_copy_limited(char* dst, const char* src, size_t cap) {
-  if (dst == nullptr || cap == 0U) {
-    return;
-  }
-  if (src == nullptr) {
-    dst[0] = 0;
-    return;
-  }
-  size_t i = 0U;
-  for (; i + 1U < cap && src[i] != 0; ++i) {
-    dst[i] = src[i];
-  }
-  dst[i] = 0;
-}
-
-static bool text_equals(const char* a, const char* b) {
-  return strcmp(a, b) == 0;
-}
-
-static void TextSet(TextComponent& tc, uint8_t x, uint8_t y, uint16_t color, const char* text) {
-  tc.active = true;
-  tc.x = x;
-  tc.y = y;
-  tc.desiredColor = color;
-  str_copy_limited(tc.desiredText, text, sizeof(tc.desiredText));
-}
-
-static void TextDeactivate(TextComponent& tc) {
-  tc.active = false;
-}
-
-static void TextInvalidate(TextComponent& tc) {
-  tc.renderedValid = false;
-}
-
-static void IndicatorInvalidate(IndicatorComponent& ic) {
-  ic.renderedValid = false;
-}
-
-static void ProgressInvalidate(ProgressComponent& pc) {
-  pc.renderedValid = false;
-}
-
-static void CommandInvalidate(ValueCommandComponent& cc) {
-  cc.renderedValid = false;
-}
-
-static void CommandInvalidate(TimeoutCommandComponent& cc) {
-  cc.renderedValid = false;
-}
-
-static void MarkerInvalidate(MarkerComponent& mc) {
-  mc.currentVisible = false;
-  mc.phase = MARKER_IDLE;
-}
-
-static void UiInvalidateAllRendered(void) {
-  TextInvalidate(s_menuTitleText);
-  for (uint8_t i = 0; i < MENU_ITEM_COUNT; ++i) {
-    TextInvalidate(s_menuItemTexts[i]);
-  }
-  TextInvalidate(s_brightnessText);
-  TextInvalidate(s_calCenterLeftText);
-  TextInvalidate(s_calCenterRightText);
-  TextInvalidate(s_calEdgeLeftText);
-  TextInvalidate(s_calEdgeRightText);
-  IndicatorInvalidate(s_usbIndicator);
-  IndicatorInvalidate(s_rfIndicator);
-  for (uint8_t i = 0; i < 3U; ++i) {
-    ProgressInvalidate(s_progress[i]);
-  }
-  CommandInvalidate(s_brightnessCmd);
-  CommandInvalidate(s_backlightTimeoutCmd);
-  MarkerInvalidate(s_normalMarker);
-  MarkerInvalidate(s_calMarker);
-}
-
-static uint8_t MenuItemY(uint8_t idx) {
-  return (idx == MENU_CAL_CENTER) ? 28U : 42U;
-}
-
-static const char* MenuItemText(uint8_t idx, bool selected) {
-  if (idx == MENU_CAL_CENTER) {
-    return selected ? "> Cal center" : "  Cal center";
-  }
-  return selected ? "> Cal edge" : "  Cal edge";
-}
-
-static void FormatBrightnessText(char* out, size_t cap) {
-  snprintf(out, cap, "Brightness %3u   ", BrightnessLevel());
-}
-
-static void UiApplyMenuTexts(void) {
-  TextSet(s_menuTitleText, 10, 10, COLOR_YELLOW, "MENU");
-  for (uint8_t i = 0; i < MENU_ITEM_COUNT; ++i) {
-    TextSet(s_menuItemTexts[i], 10, MenuItemY(i),
-            (i == s_menuIndex) ? COLOR_GREEN : COLOR_WHITE,
-            MenuItemText(i, i == s_menuIndex));
-  }
-  char line[22];
-  FormatBrightnessText(line, sizeof(line));
-  TextSet(s_brightnessText, 10, 56, COLOR_CYAN, line);
-}
-
-static void UiApplyCalCenterTexts(void) {
-  TextSet(s_calCenterLeftText, 10, 10, COLOR_GREEN, "c\na\nl");
-  TextSet(s_calCenterRightText, 142, 10, COLOR_CYAN, "c\ne\nn");
-}
-
-static void UiApplyCalEdgeTexts(void) {
-  TextSet(s_calEdgeLeftText, 10, 10, COLOR_GREEN, "e\nd\ng");
-  TextSet(s_calEdgeRightText, 142, 10, COLOR_CYAN, "m\na\nx");
-}
-
-static void UiDeactivateAllSceneTexts(void) {
-  TextDeactivate(s_menuTitleText);
-  for (uint8_t i = 0; i < MENU_ITEM_COUNT; ++i) {
-    TextDeactivate(s_menuItemTexts[i]);
-  }
-  TextDeactivate(s_brightnessText);
-  TextDeactivate(s_calCenterLeftText);
-  TextDeactivate(s_calCenterRightText);
-  TextDeactivate(s_calEdgeLeftText);
-  TextDeactivate(s_calEdgeRightText);
-}
-
-static void UiSetScene(SceneId scene) {
-  s_scene = scene;
-  s_sceneClear.pending = true;
-  s_sceneClear.color = COLOR_BLACK;
-  UiDeactivateAllSceneTexts();
-  s_normalMarker.active = (scene == SCENE_NORMAL);
-  s_normalMarker.eraseOnMove = true;
-  s_calMarker.active = (scene == SCENE_CAL_CENTER || scene == SCENE_CAL_EDGE);
-  s_calMarker.eraseOnMove = false;
-  if (!s_normalMarker.active) {
-    s_normalMarker.desiredVisible = false;
-  }
-  if (!s_calMarker.active) {
-    s_calMarker.desiredVisible = false;
-  }
-
-  switch (scene) {
-    case SCENE_NORMAL:
-      break;
-    case SCENE_MENU:
-      UiApplyMenuTexts();
-      break;
-    case SCENE_CAL_CENTER:
-      UiApplyCalCenterTexts();
-      break;
-    case SCENE_CAL_EDGE:
-      UiApplyCalEdgeTexts();
-      break;
-    default:
-      break;
-  }
-
-  UiInvalidateAllRendered();
-}
-
-static void QueueBacklightDesired(uint8_t level) {
-  s_brightnessCmd.desiredValue = level;
-}
-
-static void QueueBacklightTimeoutDesired(uint32_t timeoutMs) {
-  s_backlightTimeoutCmd.desiredValue = timeoutMs;
-}
-
-static void HandleUsbState(bool usbConnected) {
-#ifdef DEBUG_I2C
-  if (s_debugSerialForced) {
-    s_usbConnected = usbConnected;
-    s_usbIndicator.desired = usbConnected;
-    return;
-  }
-#endif
-  if (s_usbConnected == usbConnected) {
-    s_usbIndicator.desired = usbConnected;
-    return;
-  }
-  if (!usbConnected) {
-    if (s_usbConnected) {
-      Serial.end();
+static void HmiLogToSerial(const char* text, bool emergency)
+{
+    if (emergency)
+    {
+        EnsureSerialStarted();
     }
-    s_usbConnected = false;
-    s_usbIndicator.desired = false;
-  } else {
-    s_usbConnected = true;
-    Serial.begin(115200);
-    delay(20);
-    s_usbIndicator.desired = true;
-  }
-}
 
-static void EnterMenu(void) {
-  if (s_uiMode == UI_MENU) {
-    return;
-  }
-  s_uiMode = UI_MENU;
-  s_menuIndex = MENU_CAL_CENTER;
-  s_lastMenuActivityMs = millis();
-  s_lastMenuTimeoutRefreshMs = 0;
-  QueueBacklightDesired(BrightnessLevel());
-  UiSetScene(SCENE_MENU);
-}
-
-static void ExitMenu(void) {
-  if (s_uiMode == UI_NORMAL) {
-    return;
-  }
-  s_uiMode = UI_NORMAL;
-  QueueBacklightDesired(DimmedBrightnessLevel());
-  UiSetScene(SCENE_NORMAL);
-}
-
-static void EnterCalCenter(void) {
-  s_uiMode = UI_CAL_CENTER;
-  s_tmpCalX = s_calX;
-  s_tmpCalY = s_calY;
-  s_tmpCalX.cMin = CurrentRawX();
-  s_tmpCalX.cMax = CurrentRawX();
-  s_tmpCalY.cMin = CurrentRawY();
-  s_tmpCalY.cMax = CurrentRawY();
-  s_lastMenuActivityMs = millis();
-  s_calMarker.desiredVisible = false;
-  UiSetScene(SCENE_CAL_CENTER);
-}
-
-static void EnterCalEdge(void) {
-  s_uiMode = UI_CAL_EDGE;
-  s_tmpCalX = s_calX;
-  s_tmpCalY = s_calY;
-  s_tmpCalX.min = CurrentRawX();
-  s_tmpCalX.max = CurrentRawX();
-  s_tmpCalY.min = CurrentRawY();
-  s_tmpCalY.max = CurrentRawY();
-  s_lastMenuActivityMs = millis();
-  s_calMarker.desiredVisible = false;
-  UiSetScene(SCENE_CAL_EDGE);
-}
-
-static void ReturnToMenu(void) {
-  s_uiMode = UI_MENU;
-  s_lastMenuActivityMs = millis();
-  QueueBacklightDesired(BrightnessLevel());
-  UiSetScene(SCENE_MENU);
-}
-
-static void SaveCalCenterAndReturn(void) {
-  if (s_tmpCalX.cMin > s_tmpCalX.cMax) {
-    const uint16_t t = s_tmpCalX.cMin;
-    s_tmpCalX.cMin = s_tmpCalX.cMax;
-    s_tmpCalX.cMax = t;
-  }
-  if (s_tmpCalY.cMin > s_tmpCalY.cMax) {
-    const uint16_t t = s_tmpCalY.cMin;
-    s_tmpCalY.cMin = s_tmpCalY.cMax;
-    s_tmpCalY.cMax = t;
-  }
-  s_calX.cMin = s_tmpCalX.cMin;
-  s_calX.cMax = s_tmpCalX.cMax;
-  s_calY.cMin = s_tmpCalY.cMin;
-  s_calY.cMax = s_tmpCalY.cMax;
-  SaveCalibrationPrefs();
-  PrintCalibrationState("CAL center saved");
-  ReturnToMenu();
-}
-
-static void SaveCalEdgeAndReturn(void) {
-  if (s_tmpCalX.min > s_tmpCalX.max) {
-    const uint16_t t = s_tmpCalX.min;
-    s_tmpCalX.min = s_tmpCalX.max;
-    s_tmpCalX.max = t;
-  }
-  if (s_tmpCalY.min > s_tmpCalY.max) {
-    const uint16_t t = s_tmpCalY.min;
-    s_tmpCalY.min = s_tmpCalY.max;
-    s_tmpCalY.max = t;
-  }
-  s_calX.min = s_tmpCalX.min;
-  s_calX.max = s_tmpCalX.max;
-  s_calY.min = s_tmpCalY.min;
-  s_calY.max = s_tmpCalY.max;
-  SaveCalibrationPrefs();
-  PrintCalibrationState("CAL edge saved");
-  ReturnToMenu();
-}
-
-static void AdjustBrightness(int delta) {
-  int next = (int)s_brightnessStep + delta;
-  if (next < 0) {
-    next = 0;
-  }
-  if (next > 10) {
-    next = 10;
-  }
-  if ((uint8_t)next == s_brightnessStep) {
-    return;
-  }
-  s_brightnessStep = (uint8_t)next;
-  SaveBrightnessPrefs();
-  QueueBacklightDesired((s_uiMode == UI_NORMAL) ? DimmedBrightnessLevel() : BrightnessLevel());
-  if (s_scene == SCENE_MENU) {
-    char line[22];
-    FormatBrightnessText(line, sizeof(line));
-    TextSet(s_brightnessText, 10, 56, COLOR_CYAN, line);
-  }
-}
-
-static void UpdateNormalMarkerDesired(void) {
-  if (s_scene != SCENE_NORMAL) {
-    s_normalMarker.desiredVisible = false;
-    return;
-  }
-  if (!CurrentJoyValid() || !CurrentBacklightOn()) {
-    s_normalMarker.desiredVisible = false;
-    return;
-  }
-  s_normalMarker.active = true;
-  s_normalMarker.desiredVisible = true;
-  s_normalMarker.desiredX = (uint8_t)NormToPixel(GetNormX(), JOY_AREA_X0, JOY_AREA_X1);
-  s_normalMarker.desiredY = (uint8_t)NormToPixel(-GetNormY(), JOY_AREA_Y0, JOY_AREA_Y1);
-  s_normalMarker.desiredIndex = 3;
-  s_normalMarker.desiredColor = COLOR_WHITE;
-}
-
-static void UpdateCalibrationMarkerDesired(void) {
-  if (!CurrentJoyValid() || !CurrentBacklightOn()) {
-    s_calMarker.desiredVisible = false;
-    return;
-  }
-  const uint16_t rawX = CurrentRawX();
-  const uint16_t rawY = CurrentRawY();
-  int px = -1;
-  int py = -1;
-
-  if (s_uiMode == UI_CAL_CENTER) {
-    if (rawX < s_tmpCalX.cMin) s_tmpCalX.cMin = rawX;
-    if (rawX > s_tmpCalX.cMax) s_tmpCalX.cMax = rawX;
-    if (rawY < s_tmpCalY.cMin) s_tmpCalY.cMin = rawY;
-    if (rawY > s_tmpCalY.cMax) s_tmpCalY.cMax = rawY;
-    const int widthX = (int)s_calX.cMax - (int)s_calX.cMin;
-    const int widthY = (int)s_calY.cMax - (int)s_calY.cMin;
-    const int w = 2 * max(max(widthX, widthY), 16);
-    const int cx = ((int)s_calX.cMin + (int)s_calX.cMax) / 2;
-    const int cy = ((int)s_calY.cMin + (int)s_calY.cMax) / 2;
-    px = MapRawWindowToPixel(rawX, cx, w, JOY_AREA_X0, JOY_AREA_X1);
-    py = MapRawWindowToPixel(rawY, cy, w, JOY_AREA_Y0, JOY_AREA_Y1);
-    s_calMarker.desiredIndex = 5;
-    s_calMarker.desiredColor = COLOR_GREEN;
-  } else if (s_uiMode == UI_CAL_EDGE) {
-    if (rawX < s_tmpCalX.min) s_tmpCalX.min = rawX;
-    if (rawX > s_tmpCalX.max) s_tmpCalX.max = rawX;
-    if (rawY < s_tmpCalY.min) s_tmpCalY.min = rawY;
-    if (rawY > s_tmpCalY.max) s_tmpCalY.max = rawY;
-    px = MapRawFullToPixel(rawX, JOY_AREA_X0, JOY_AREA_X1);
-    py = MapRawFullToPixel(rawY, JOY_AREA_Y0, JOY_AREA_Y1);
-    s_calMarker.desiredIndex = 3;
-    s_calMarker.desiredColor = COLOR_BLUE;
-  } else {
-    s_calMarker.desiredVisible = false;
-    return;
-  }
-
-  s_calMarker.active = true;
-  s_calMarker.desiredVisible = true;
-  s_calMarker.desiredX = (uint8_t)px;
-  s_calMarker.desiredY = (uint8_t)py;
-}
-
-static void HandleButtonEvents(const ButtonEvents& ev) {
-  if (ev.anyChange && s_uiMode != UI_NORMAL) {
-    s_lastMenuActivityMs = millis();
-  }
-  if (s_uiMode != UI_NORMAL) {
-    if (ev.lupRise) {
-      AdjustBrightness(+1);
+    if (!s_serialStarted || text == nullptr)
+    {
+        return;
     }
-    if (ev.ldnRise) {
-      AdjustBrightness(-1);
-    }
-  }
 
-  switch (s_uiMode) {
-    case UI_NORMAL:
-      if (ev.okRise) {
-        EnterMenu();
-      }
-      break;
-    case UI_MENU:
-      if (ev.backRise) {
-        ExitMenu();
-        break;
-      }
-      if (ev.upRise) {
-        s_menuIndex = (s_menuIndex == 0U) ? (MENU_ITEM_COUNT - 1U) : (uint8_t)(s_menuIndex - 1U);
-        UiApplyMenuTexts();
-      }
-      if (ev.downRise) {
-        s_menuIndex = (uint8_t)((s_menuIndex + 1U) % MENU_ITEM_COUNT);
-        UiApplyMenuTexts();
-      }
-      if (ev.okRise) {
-        if (s_menuIndex == MENU_CAL_CENTER) {
-          EnterCalCenter();
-        } else {
-          EnterCalEdge();
+    Serial.println(text);
+}
+
+static bool ParseFixed2Digits(const char* s, uint8_t* value)
+{
+    if ((s == nullptr) || (value == nullptr))
+    {
+        return false;
+    }
+    if (!isdigit((unsigned char)s[0]) || !isdigit((unsigned char)s[1]) || (s[2] != '\0'))
+    {
+        return false;
+    }
+
+    *value = (uint8_t)(((uint8_t)(s[0] - '0') * 10U) + (uint8_t)(s[1] - '0'));
+    return true;
+}
+
+static bool ParseFixed1Digit01(const char* s, bool* value)
+{
+    if ((s == nullptr) || (value == nullptr))
+    {
+        return false;
+    }
+    if (((s[0] != '0') && (s[0] != '1')) || (s[1] != '\0'))
+    {
+        return false;
+    }
+
+    *value = (s[0] == '1');
+    return true;
+}
+
+static bool ParseUnsigned32(const char* text, uint32_t* value)
+{
+    if ((text == nullptr) || (value == nullptr) || (*text == '\0'))
+    {
+        return false;
+    }
+
+    char* endPtr = nullptr;
+    const unsigned long parsed = strtoul(text, &endPtr, 10);
+    if ((endPtr == text) || (*endPtr != '\0'))
+    {
+        return false;
+    }
+
+    *value = (uint32_t)parsed;
+    return true;
+}
+
+static void QueueUsbIndicator(bool value)
+{
+    s_hmiqUsbSt.state.indicator.value = value ? 1U : 0U;
+    s_hmiqUsbSt.hasData = true;
+}
+
+static void HandleSerialCommand(const char* line)
+{
+    if ((line == nullptr) || (line[0] == '\0'))
+    {
+        return;
+    }
+
+    if (((line[0] == 'A') || (line[0] == 'B') || (line[0] == 'C')) && (line[1] != '\0'))
+    {
+        uint8_t value = 0U;
+        if (!ParseFixed2Digits(&line[1], &value))
+        {
+            return;
         }
-      }
-      break;
-    case UI_CAL_CENTER:
-      if (ev.backRise) {
-        ReturnToMenu();
-      } else if (ev.okRise) {
-        SaveCalCenterAndReturn();
-      }
-      break;
-    case UI_CAL_EDGE:
-      if (ev.backRise) {
-        ReturnToMenu();
-      } else if (ev.okRise) {
-        SaveCalEdgeAndReturn();
-      }
-      break;
-    default:
-      break;
-  }
-}
 
-static void HandleMenuTimers(void) {
-  if (s_uiMode == UI_NORMAL) {
-    return;
-  }
-  const uint32_t now = millis();
-  if ((uint32_t)(now - s_lastMenuActivityMs) >= MENU_INACTIVITY_MS) {
-    ExitMenu();
-    return;
-  }
-  if ((uint32_t)(now - s_lastMenuTimeoutRefreshMs) >= MENU_TIMEOUT_REFRESH_MS) {
-    QueueBacklightTimeoutDesired(MENU_TIMEOUT_VALUE_MS);
-    s_lastMenuTimeoutRefreshMs = now;
-  }
-}
-
-static void HandleSerialCommand(const String& lineIn) {
-  String line = lineIn;
-  line.trim();
-  if (line.length() < 2) {
-    return;
-  }
-  if (line[0] == 'A' || line[0] == 'B' || line[0] == 'C') {
-    const int value = line.substring(1).toInt();
-    const uint8_t index = (line[0] == 'A') ? 0U : (line[0] == 'B' ? 1U : 2U);
-    uint8_t out = (uint8_t)value;
-    if (out > 70U) out = 70U;
-    s_progress[index].desired = out;
-    return;
-  }
-  if (line[0] == 'D') {
-    s_rfIndicator.desired = (line.substring(1).toInt() != 0);
-    return;
-  }
-  if (line[0] == 'T') {
-    const int comma = line.indexOf(',');
-    if (comma <= 1) {
-      return;
+        const uint8_t index = (line[0] == 'A') ? 0U : ((line[0] == 'B') ? 1U : 2U);
+    switch (index)
+    {
+        case 0U:
+            s_hmiqBattery.state.progress.value = value;
+            s_hmiqBattery.hasData = true;
+            break;
+        case 1U:
+            s_hmiqRssiRx.state.progress.value = value;
+            s_hmiqRssiRx.hasData = true;
+            break;
+        case 2U:
+            s_hmiqRssiTx.state.progress.value = value;
+            s_hmiqRssiTx.hasData = true;
+            break;
+        default:
+            break;
     }
-    const long hz = line.substring(1, comma).toInt();
-    const long ms = line.substring(comma + 1).toInt();
-    if (hz <= 0 || ms < 0) {
-      return;
+        return;
     }
-    const uint32_t divider32 = 1000000UL / (uint32_t)hz;
-    const uint16_t divider = (divider32 > 0xFFFFu) ? 0xFFFFu : (uint16_t)divider32;
-    const uint16_t delayMs = (ms > 0xFFFFL) ? 0xFFFFu : (uint16_t)ms;
-    hmi_cmd_play_tone(divider, delayMs);
-  }
-}
 
-static void PumpSerialRx(void) {
-  if (!SerialEnabled()) {
-    return;
-  }
-  while (Serial.available() > 0) {
-    const char c = (char)Serial.read();
-    if (c == '\r') {
-      continue;
+    if ((line[0] == 'D') && (line[1] != '\0'))
+    {
+        bool value = false;
+        if (!ParseFixed1Digit01(&line[1], &value))
+        {
+            return;
+        }
+        s_hmiqRfSt.state.indicator.value = value ? 1U : 0U;
+        s_hmiqRfSt.hasData = true;
+        return;
     }
-    if (c == '\n') {
-      if (!s_serialLine.isEmpty()) {
-        HandleSerialCommand(s_serialLine);
-        s_serialLine = "";
-      }
-    } else if (s_serialLine.length() < 96) {
-      s_serialLine += c;
+
+    if (line[0] == 'T')
+    {
+        const char* comma = strchr(&line[1], ',');
+        if (comma == nullptr)
+        {
+            return;
+        }
+
+        char hzText[12];
+        char msText[12];
+        const size_t hzLen = (size_t)(comma - (&line[1]));
+        const size_t msLen = strlen(comma + 1);
+        if ((hzLen == 0U) || (hzLen >= sizeof(hzText)) || (msLen == 0U) || (msLen >= sizeof(msText)))
+        {
+            return;
+        }
+
+        memcpy(hzText, &line[1], hzLen);
+        hzText[hzLen] = '\0';
+        memcpy(msText, comma + 1, msLen + 1U);
+
+        uint32_t hz = 0U;
+        uint32_t ms = 0U;
+        if (!ParseUnsigned32(hzText, &hz) || !ParseUnsigned32(msText, &ms))
+        {
+            return;
+        }
+        if ((hz == 0U) || (hz > TONE_BASE_HZ) || (ms > 65535U))
+        {
+            return;
+        }
+
+        const uint32_t divider32 = TONE_BASE_HZ / hz;
+        if ((divider32 == 0U) || (divider32 > 65535U))
+        {
+            return;
+        }
+        s_cmdBeep.state.beep.divider = (uint16_t)divider32;
+        s_cmdBeep.state.beep.durationMs = (uint16_t)ms;
+        s_cmdBeep.hasData = true;
     }
-  }
 }
 
-static void ProcessHmiChanges(void) {
-  ButtonEvents ev;
-  bool joyChanged = false;
-  for (;;) {
-    const hmi_data_idx_t idx = hmi_get_next_changed();
-    if (idx == HMI_DATA_COUNT) {
-      break;
+static void CommitSerialLine(void)
+{
+    s_serialLine[s_serialLineLen] = '\0';
+    HandleSerialCommand(s_serialLine);
+    s_serialLineLen = 0U;
+}
+
+static void PollSerialRx(void)
+{
+    while (s_serialStarted && (Serial.available() > 0))
+    {
+        const char ch = (char)Serial.read();
+        if ((ch == '\r') || (ch == '\n'))
+        {
+            if (s_serialLineLen > 0U)
+            {
+                CommitSerialLine();
+            }
+            continue;
+        }
+
+        if ((s_serialLineLen + 1U) < SERIAL_LINE_CAP)
+        {
+            s_serialLine[s_serialLineLen++] = ch;
+        }
+        else
+        {
+            s_serialLineLen = 0U;
+        }
     }
-    switch (idx) {
-      case HMI_DATA_STAT_USB_CONN:
-        HandleUsbState(hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
-        break;
-      case HMI_DATA_JOY_X:
-      case HMI_DATA_JOY_Y:
-        joyChanged = true;
-        break;
-      case HMI_DATA_BTN_OK:
-        ev.anyChange = true;
-        ev.okRise = ButtonPressed(HMI_DATA_BTN_OK);
-        break;
-      case HMI_DATA_BTN_BACK:
-        ev.anyChange = true;
-        ev.backRise = ButtonPressed(HMI_DATA_BTN_BACK);
-        break;
-      case HMI_DATA_BTN_UP:
-        ev.anyChange = true;
-        ev.upRise = ButtonPressed(HMI_DATA_BTN_UP);
-        break;
-      case HMI_DATA_BTN_DOWN:
-        ev.anyChange = true;
-        ev.downRise = ButtonPressed(HMI_DATA_BTN_DOWN);
-        break;
-      case HMI_DATA_BTN_LUP:
-        ev.anyChange = true;
-        ev.lupRise = ButtonPressed(HMI_DATA_BTN_LUP);
-        break;
-      case HMI_DATA_BTN_LDN:
-        ev.anyChange = true;
-        ev.ldnRise = ButtonPressed(HMI_DATA_BTN_LDN);
-        break;
-      case HMI_DATA_BTN_ON:
-      case HMI_DATA_BTN_FIRE:
-      case HMI_DATA_BTN_RUP:
-      case HMI_DATA_BTN_RDN:
-        ev.anyChange = true;
-        break;
-      default:
-        break;
+}
+
+static void HandleUsbConnChanged(void)
+{
+    if (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U)
+    {
+        EnsureSerialStarted();
+        QueueUsbIndicator(true);
     }
-  }
-
-  if (joyChanged) {
-    s_hmiDataValid = true;
-  }
-
-  HandleButtonEvents(ev);
-  UpdateNormalMarkerDesired();
-  UpdateCalibrationMarkerDesired();
-  PrintPacketLine();
-}
-
-static bool StepClear(void* ctx) {
-  OneShotClearComponent& cc = *(OneShotClearComponent*)ctx;
-  if (!cc.pending) {
-    return false;
-  }
-  if (!hmi_cmd_lcd_clear(cc.color)) {
-    return false;
-  }
-  cc.pending = false;
-  return true;
-}
-
-static bool StepText(void* ctx) {
-  TextComponent& tc = *(TextComponent*)ctx;
-  if (!tc.active) {
-    return false;
-  }
-  if (tc.renderedValid && tc.renderedColor == tc.desiredColor && text_equals(tc.renderedText, tc.desiredText)) {
-    return false;
-  }
-  if (!hmi_cmd_lcd_draw_text(tc.x, tc.y, tc.desiredColor, tc.desiredText)) {
-    return false;
-  }
-  tc.renderedColor = tc.desiredColor;
-  str_copy_limited(tc.renderedText, tc.desiredText, sizeof(tc.renderedText));
-  tc.renderedValid = true;
-  return true;
-}
-
-static bool StepIndicator(void* ctx) {
-  IndicatorComponent& ic = *(IndicatorComponent*)ctx;
-  if (ic.renderedValid && ic.rendered == ic.desired) {
-    return false;
-  }
-  if (!hmi_cmd_lcd_set_indicator(ic.index, ic.desired)) {
-    return false;
-  }
-  ic.rendered = ic.desired;
-  ic.renderedValid = true;
-  return true;
-}
-
-static bool StepProgress(void* ctx) {
-  ProgressComponent& pc = *(ProgressComponent*)ctx;
-  if (pc.renderedValid && pc.rendered == pc.desired) {
-    return false;
-  }
-  if (!hmi_cmd_lcd_set_progress(pc.index, pc.desired)) {
-    return false;
-  }
-  pc.rendered = pc.desired;
-  pc.renderedValid = true;
-  return true;
-}
-
-static bool StepBrightnessCmd(void* ctx) {
-  ValueCommandComponent& cc = *(ValueCommandComponent*)ctx;
-  if (cc.renderedValid && cc.renderedValue == cc.desiredValue) {
-    return false;
-  }
-  if (!hmi_cmd_set_brightness(cc.desiredValue)) {
-    return false;
-  }
-  cc.renderedValue = cc.desiredValue;
-  cc.renderedValid = true;
-  return true;
-}
-
-static bool StepTimeoutCmd(void* ctx) {
-  TimeoutCommandComponent& cc = *(TimeoutCommandComponent*)ctx;
-  if (cc.renderedValid && cc.renderedValue == cc.desiredValue) {
-    return false;
-  }
-  if (!hmi_cmd_set_backlight_timeout(cc.desiredValue)) {
-    return false;
-  }
-  cc.renderedValue = cc.desiredValue;
-  cc.renderedValid = true;
-  return true;
-}
-
-static bool StepMarker(void* ctx) {
-  MarkerComponent& mc = *(MarkerComponent*)ctx;
-  if (!mc.active) {
-    return false;
-  }
-  if (mc.phase == MARKER_IDLE) {
-    const bool same = (mc.currentVisible == mc.desiredVisible) && (!mc.desiredVisible || (mc.currentX == mc.desiredX && mc.currentY == mc.desiredY && mc.currentIndex == mc.desiredIndex && mc.currentColor == mc.desiredColor));
-    if (same) {
-      return false;
+    else
+    {
+        if (s_serialStarted)
+        {
+            Serial.end();
+            s_serialStarted = false;
+        }
+        QueueUsbIndicator(false);
     }
-    if (!mc.desiredVisible) {
-      if (mc.currentVisible && mc.eraseOnMove) {
-        mc.phase = MARKER_ERASE;
-      } else {
-        mc.currentVisible = false;
-      }
-      return false;
-    }
-    if (mc.currentVisible && mc.eraseOnMove) {
-      mc.phase = MARKER_ERASE;
-    } else {
-      mc.phase = MARKER_DRAW;
-    }
-  }
-
-  if (mc.phase == MARKER_ERASE) {
-    if (!hmi_cmd_lcd_draw_marker(mc.currentX, mc.currentY, mc.currentIndex, COLOR_BLACK)) {
-      return false;
-    }
-    mc.currentVisible = false;
-    mc.phase = mc.desiredVisible ? MARKER_DRAW : MARKER_IDLE;
-    return true;
-  }
-
-  if (mc.phase == MARKER_DRAW) {
-    if (!mc.desiredVisible) {
-      mc.phase = MARKER_IDLE;
-      return false;
-    }
-    if (!hmi_cmd_lcd_draw_marker(mc.desiredX, mc.desiredY, mc.desiredIndex, mc.desiredColor)) {
-      return false;
-    }
-    mc.currentVisible = true;
-    mc.currentX = mc.desiredX;
-    mc.currentY = mc.desiredY;
-    mc.currentIndex = mc.desiredIndex;
-    mc.currentColor = mc.desiredColor;
-    mc.phase = MARKER_IDLE;
-    return true;
-  }
-
-  return false;
 }
 
-static bool ServiceComponents(ComponentEntry* list, size_t count) {
-  for (size_t i = 0; i < count; ++i) {
-    if (list[i].step(list[i].ctx)) {
-      return true;
+static void TickHmiOnce(void)
+{
+    const hmi_tick_result_t rc = hmi_tick();
+    if (rc != HMI_TICK_OK)
+    {
+        return;
     }
-  }
-  return false;
-}
 
-static bool UiServiceSceneStep(void) {
-  switch (s_scene) {
-    case SCENE_NORMAL:
-      return ServiceComponents(s_sceneNormal, sizeof(s_sceneNormal) / sizeof(s_sceneNormal[0]));
-    case SCENE_MENU:
-      return ServiceComponents(s_sceneMenu, sizeof(s_sceneMenu) / sizeof(s_sceneMenu[0]));
-    case SCENE_CAL_CENTER:
-      return ServiceComponents(s_sceneCalCenter, sizeof(s_sceneCalCenter) / sizeof(s_sceneCalCenter[0]));
-    case SCENE_CAL_EDGE:
-      return ServiceComponents(s_sceneCalEdge, sizeof(s_sceneCalEdge) / sizeof(s_sceneCalEdge[0]));
-    default:
-      return false;
-  }
-}
-
-static void UiServiceTxStep(void) {
-  if (UiServiceSceneStep()) {
-    return;
-  }
-  (void)ServiceComponents(s_globalComponents, sizeof(s_globalComponents) / sizeof(s_globalComponents[0]));
-}
-
-void setup(void) {
-  LoadPrefs();
-  hmi_init();
-  s_nextPollMs = millis();
-  s_lastMenuActivityMs = s_nextPollMs;
-  s_lastMenuTimeoutRefreshMs = s_nextPollMs;
-  QueueBacklightDesired(DimmedBrightnessLevel());
-  QueueBacklightTimeoutDesired(0U);
-  UiSetScene(SCENE_NORMAL);
-}
-
-void loop(void) {
-  const uint32_t now = millis();
-  if ((int32_t)(now - s_nextPollMs) >= 0) {
-    s_nextPollMs += HMI_POLL_MS;
-    const hmi_tick_result_t tickResult = hmi_tick();
-    DebugLogHmiErrors(tickResult);
-    const hmi_tick_result_t dataErrors = (hmi_tick_result_t)(tickResult & (HMI_TICK_ERR_NOT_INITIALIZED | HMI_TICK_ERR_I2C_REQUEST | HMI_TICK_ERR_I2C_READ | HMI_TICK_ERR_BAD_PACKET));
-    if (dataErrors != HMI_TICK_OK) {
-      s_hmiDataValid = false;
-    } else {
-      ProcessHmiChanges();
+    hmi_data_idx_t idx;
+    while ((idx = hmi_next_changed()) != HMI_DATA_COUNT)
+    {
+        if (idx == HMI_DATA_STAT_USB_CONN)
+        {
+            HandleUsbConnChanged();
+        }
     }
-  }
+    (void)HmiqServiceOne(s_hmiSys, sizeof(s_hmiSys) / sizeof(s_hmiSys[0]));
+}
 
-  HandleMenuTimers();
-  PumpSerialRx();
-  UiServiceTxStep();
+void setup()
+{
+    hmi_init(HmiLogToSerial);
+    s_nextHmiTickMs = millis() + HMI_TICK_PERIOD_MS;
+}
+
+void loop()
+{
+    PollSerialRx();
+
+    const uint32_t now = millis();
+    if ((int32_t)(now - s_nextHmiTickMs) >= 0)
+    {
+            TickHmiOnce();
+            s_nextHmiTickMs += HMI_TICK_PERIOD_MS;
+    }
 }

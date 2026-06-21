@@ -42,7 +42,9 @@ typedef enum {
     HMI_CMD_ERR_I2C_TX          = 4
 } hmi_cmd_result_t;
 
-void hmi_init(void);
+typedef void (*hmi_log_callback_t)(const char *text, bool emergency);
+
+void hmi_init(hmi_log_callback_t log_callback);
 hmi_tick_result_t hmi_tick(void);
 uint16_t hmi_get(hmi_data_idx_t idx);
 hmi_data_idx_t hmi_next_changed(void);

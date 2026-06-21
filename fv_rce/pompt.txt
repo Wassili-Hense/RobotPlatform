@@ -1,76 +1,57 @@
-﻿Техзадание
-1. Платформа
+﻿Arduino / ESP32-D0WD-V3
 
-Arduino / ESP32-D0WD-V3
-I2C master:
+1. HMI-модуль на ESP32
+- Использовать hmi.h / hmi.cpp как клиент HMI.
+- hmi_tick() должен вызываться периодически каждые 5 мс.
+- После hmi_tick() должна отправляться не более чем одна команда HMI.
+- Любая LCD-команда может отправляться только если hmi_get(HMI_DATA_STAT_LCD_BUSY) == 0.
+- hmi_init() принимает callback для логирования.
+- Если DEBUG_HMI определён, hmi.cpp должен отправлять debug/error сообщения через callback.
+- При ошибках callback вызывается с текстом формата "<имя функции> - <имя ошибки>" и emergency=true.
+- После ParsePacket() в hmi_tick(), если есть изменения данных, должен выводиться debug-статус в формате:
+  RX %1X %5u %5u %s
+- Перед возвратом HMI_CMD_OK из SendCommand() должен логироваться текст "TX " и отправленные байты.
 
-SDA = 21
-SCL = 22
-адрес slave: 0x14
+2. Валидация аргументов HMI-команд
+- Для LCD text разрешены только символы charset[32..126].
+- font 7x10
+- Для LCD text и marker координаты должны находиться внутри доступной области экрана x=5..154, y=5..79.
+- Для команд с неверными аргументами должен возвращаться HMI_CMD_ERR_INVALID_ARG, чтобы такие команды не повторялись бесконечно.
+- Для временно недоступных команд (например LCD busy / I2C TX) должен сохраняться признак возможности повторной попытки.
 
+3. Организация очереди команд на ESP32
+- Описание структуры HMI-команды, unions config/state, типы команд, send-функции, helper-макросы и HmiqServiceOne() вынести в hmi_helpers.h.
+- В .ino работать напрямую с отдельными переменными команд, например:
+  s_cmdUsbIndicator
+  s_cmdRfIndicator
+  s_cmdProgress0
+  s_cmdProgress1
+  s_cmdProgress2
+  s_cmdBeep
+- После объявления этих переменных собрать массив s_hmiSys из указателей на них.
+- В .ino обновлять state/hasData именно у s_cmd* переменных напрямую, без поискового helper'а вроде HmiqFind.
 
-Экран подключён к I2C slave:
+4. Serial / USB поведение
+- Если изменился HMI_DATA_STAT_USB_CONN:
+  - при 1: Serial.begin(115200), затем очередь на LCD_Indicator(1, 1)
+  - при 0: Serial.end(), затем очередь на LCD_Indicator(1, 0)
+- Если log callback приходит с emergency=true, Serial должен включаться принудительно перед выводом сообщения.
 
-RGB565
-charset[32..126]
-шрифт 10x7
-доступная область: x=10..149, y=10..79
+5. Приём команд из Serial
+- Реализовать текстовый приём команд в .ino:
+  ANN  -> DrawProgressBar(0, NN)
+  BNN  -> DrawProgressBar(1, NN)
+  CNN  -> DrawProgressBar(2, NN)
+  DN   -> LCD_Indicator(0, N)
+  THz,Ms -> Tone(1000000/Hz, Ms)
+- Команды должны парситься построчно по CR/LF.
+- Некорректные команды должны игнорироваться без аварий.
 
-2. Опрос и вывод в Serial
-
-Период опроса I2C: 5 мс
-По каждому принятому I2C-пакету печатать строку:
-
-length([0]&0x0F) status([1]) X Y button
-
-
-Для length==1 печатать только при изменении status
-Формат:
-
-length→ %2u
-status →%2x
-X, Y → [-1..1], формат %.3f
-button → имя кнопки без BUTTON_
-
-Если нажато несколько кнопок — выводить кнопку с меньшим индексом
-
-Лог всех исходящих I2C-команд:
-
-формат TX 20 01 01
-
-3. LCD flow control
-
-После получения STATUS:
-
-s_lcdSendAllowed = (LCD busy == 0)
-
-
-Любая LCD_* команда может отправляться только если
-
-s_lcdSendAllowed == true
-
-
-После любой успешно отправленной LCD_* команды:
-
-s_lcdSendAllowed = false
-
-приоритет операций
-высокий: Tone, LCD_DrawMarker
-средний: остальные
-низкий: LCD_DrawProgressBar, LCD_Indicator
-
-4. USB / Serial
-При обработке STATUS:
-
-если Usb connected изменился на 0:
-
-Serial.end()
-LCD_Indicator(1, 0)
-
-если Usb connected изменился на 1:
-
-Serial.begin(115200)
-LCD_Indicator(1, 1)
+6. Файлы результата
+- hmi.h
+- hmi.cpp
+- hmi_helpers.h
+- fv_rce.ino
 
 5. Джойстик и маркер
 Обычный режим
