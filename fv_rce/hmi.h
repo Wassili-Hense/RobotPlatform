@@ -43,7 +43,7 @@ void hmi_init(void);
 hmi_tick_result_t hmi_tick(void);
 uint16_t hmi_get(hmi_data_idx_t idx);
 hmi_data_idx_t hmi_get_next_changed(void);
-
+/* no Queue*/
 bool hmi_cmd_set_backlight_timeout(uint32_t timeout_ms);
 bool hmi_cmd_set_brightness(uint8_t level);
 bool hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms);
