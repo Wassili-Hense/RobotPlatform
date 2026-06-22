@@ -5,98 +5,140 @@
 #include <stdint.h>
 #include "hmi.h"
 
-typedef enum {
-  GUI_CALL_ENTER = 0,
-  GUI_CALL_PROCESS,
-  GUI_CALL_PROCESS_AND_SEND,
-  GUI_CALL_EXIT
-} gui_call_t;
+class GUIComponent;
 
-typedef enum {
-  GUI_J_VIEW_PHASE_IDLE = 0,
-  GUI_J_VIEW_PHASE_ERASE,
-  GUI_J_VIEW_PHASE_DRAW
-} gui_j_view_phase_t;
+typedef const void* gui_class_id_t;
 
-struct gui_scene_t;
+template<typename T>
+inline gui_class_id_t GUIClassIdOf(void) {
+    return reinterpret_cast<gui_class_id_t>(&GUIClassIdOf<T>);
+}
 
-typedef struct gui_scene_t {
-  class GUIComponent* const* components;
-  size_t componentCount;
+typedef struct {
+    GUIComponent** components;
+    size_t componentCount;
 } gui_scene_t;
 
 class GUIComponent {
 public:
-  virtual bool Handle(gui_call_t call) = 0;
-  virtual bool IsMenuItem(void) const { return false; }
-  virtual bool IsMenuActive(void) const { return false; }
-  virtual void SetMenuActive(bool active) { (void)active; }
-  virtual gui_scene_t* GetMenuTargetScene(void) const { return nullptr; }
-  virtual ~GUIComponent() = default;
-protected:
-  GUIComponent() = default;
+    virtual ~GUIComponent() = default;
+    virtual gui_class_id_t GetClassId(void) const = 0;
+    virtual bool Enter(void) = 0;
+    virtual bool Process(void) = 0;
+    virtual bool ProcessAndSend(void) = 0;
+    virtual bool Exit(void) = 0;
 };
 
-class GUIClsComponent final : public GUIComponent {
+template<typename T>
+class GUIComponentTyped : public GUIComponent {
 public:
-  explicit GUIClsComponent(uint16_t color);
-  bool Handle(gui_call_t call) override;
-private:
-  uint16_t m_color;
-  bool m_pending;
+    static gui_class_id_t ClassId(void) {
+        return GUIClassIdOf<T>();
+    }
+
+    gui_class_id_t GetClassId(void) const override {
+        return ClassId();
+    }
 };
 
-class GUIJViewComponent final : public GUIComponent {
+class GUIClsComponent : public GUIComponentTyped<GUIClsComponent> {
 public:
-  GUIJViewComponent();
-  bool Handle(gui_call_t call) override;
+    explicit GUIClsComponent(uint16_t color);
+    bool Enter(void) override;
+    bool Process(void) override;
+    bool ProcessAndSend(void) override;
+    bool Exit(void) override;
+
 private:
-  bool Update();
-  uint8_t m_currentX;
-  uint8_t m_currentY;
-  uint8_t m_nextX;
-  uint8_t m_nextY;
-  bool m_visible;
-  gui_j_view_phase_t m_phase;
+    uint16_t m_color;
+    bool m_pending;
 };
 
-class GUIHotKeyComponent final : public GUIComponent {
-public:
-  GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene);
-  bool Handle(gui_call_t call) override;
-private:
-  hmi_data_idx_t m_idx;
-  gui_scene_t* m_targetScene;
+enum gui_j_view_phase_t {
+    GUI_J_VIEW_PHASE_IDLE = 0,
+    GUI_J_VIEW_PHASE_ERASE,
+    GUI_J_VIEW_PHASE_DRAW
 };
 
-class GUILabelComponent final : public GUIComponent {
+class GUIJViewComponent : public GUIComponentTyped<GUIJViewComponent> {
 public:
-  GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text);
-  bool Handle(gui_call_t call) override;
+    GUIJViewComponent();
+    bool Enter(void) override;
+    bool Process(void) override;
+    bool ProcessAndSend(void) override;
+    bool Exit(void) override;
+
 private:
-  uint8_t m_x;
-  uint8_t m_y;
-  uint16_t m_color;
-  const char* m_text;
-  bool m_pending;
+    bool Update(void);
+
+    uint8_t m_currentX;
+    uint8_t m_currentY;
+    uint8_t m_nextX;
+    uint8_t m_nextY;
+    bool m_visible;
+    gui_j_view_phase_t m_phase;
 };
 
-class GUIMenuItemComponent final : public GUIComponent {
+class GUIHotKeyComponent : public GUIComponentTyped<GUIHotKeyComponent> {
 public:
-  GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene);
-  bool Handle(gui_call_t call) override;
-  bool IsMenuItem(void) const override;
-  bool IsMenuActive(void) const override;
-  void SetMenuActive(bool active) override;
-  gui_scene_t* GetMenuTargetScene(void) const override;
+    GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene);
+    bool Enter(void) override;
+    bool Process(void) override;
+    bool ProcessAndSend(void) override;
+    bool Exit(void) override;
+
 private:
-  bool Draw(bool active);
-  uint8_t m_x;
-  uint8_t m_y;
-  const char* m_text;
-  gui_scene_t* m_targetScene;
-  bool m_active;
-  bool m_pending;
+    bool ProcessImpl(void);
+
+    hmi_data_idx_t m_idx;
+    gui_scene_t* m_targetScene;
+};
+
+class GUILabelComponent : public GUIComponentTyped<GUILabelComponent> {
+public:
+    GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text);
+    bool Enter(void) override;
+    bool Process(void) override;
+    bool ProcessAndSend(void) override;
+    bool Exit(void) override;
+
+private:
+    uint8_t m_x;
+    uint8_t m_y;
+    uint16_t m_color;
+    const char* m_text;
+    bool m_pending;
+};
+
+class GUIMenuItemComponent : public GUIComponentTyped<GUIMenuItemComponent> {
+public:
+    GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene);
+    bool Enter(void) override;
+    bool Process(void) override;
+    bool ProcessAndSend(void) override;
+    bool Exit(void) override;
+
+    static void EnsureSceneSelection(gui_scene_t* scene);
+
+private:
+    bool Draw(bool active);
+    bool ProcessNavigation(void);
+    void SetActive(bool active);
+    void SyncPrevActive(void);
+
+    static GUIMenuItemComponent* Cast(GUIComponent* component);
+    static const GUIMenuItemComponent* Cast(const GUIComponent* component);
+    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);
+    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);
+    static GUIMenuItemComponent* FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step);
+
+    uint8_t m_x;
+    uint8_t m_y;
+    const char* m_text;
+    gui_scene_t* m_targetScene;
+    bool m_active;
+    bool m_prevActive;
+    bool m_pending;
 };
 
 uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);
@@ -104,4 +146,4 @@ void GUISwitchScene(gui_scene_t* scene);
 gui_scene_t* GUIGetActiveScene(void);
 bool GUIServiceActiveScene(void);
 
-#endif  // GUI_H
+#endif // GUI_H
