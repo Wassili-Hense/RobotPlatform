@@ -351,10 +351,10 @@ bool GUIMenuItemComponent::Draw(bool active) {
   text[0] = active ? '>' : ' ';
   text[1] = ' ';
   if (m_text == NULL) {
-    text[2] = ' ';
+    text[2] = '/0';
   } else {
     (void)snprintf(&text[2], sizeof(text) - 2U, "%s", m_text);
-    text[sizeof(text) - 1U] = ' ';
+    text[sizeof(text) - 1U] = '/0';
   }
 
   const uint16_t color = active ? 0xFFFFU : 0x7BEFU;

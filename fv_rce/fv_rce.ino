@@ -9,10 +9,7 @@
 #include "gui.h"
 
 static constexpr uint32_t HMI_TICK_PERIOD_MS = 5U;
-static constexpr uint32_t TONE_BASE_HZ = 1000000UL;
 static constexpr size_t SERIAL_LINE_CAP = 32U;
-static constexpr uint8_t HMI_START_BRIGHTNESS = 30U;
-static constexpr uint32_t HMI_START_BL_TIMEOUT_MS = 30000U;
 
 extern gui_scene_t s_sceneHome;
 extern gui_scene_t s_sceneMainMenu;
@@ -33,9 +30,9 @@ gui_scene_t s_sceneHome = {
 };
 
 static GUIClsComponent s_sceneMainMenuCls(0x0000U);
-static GUILabelComponent s_sceneMainMenuTitle(40U, 20U, 0xFFFFU, "Main menu");
-static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(20U, 45U, "Cal. center", &s_sceneTest1);
-static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(20U, 58U, "Cal. edge", &s_sceneTest2);
+static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, 0x07FFU, "Main menu");
+static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(10U, 20U, "Cal. center", &s_sceneTest1);
+static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(10U, 30U, "Cal. edge", &s_sceneTest2);
 static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneHome);
 static GUIComponent* s_sceneMainMenuItems[] = {
   &s_sceneMainMenuCls,
@@ -97,10 +94,6 @@ static void HmiLogToSerial(const char* text, bool emergency) {
   Serial.println(text);
 }
 
-static void QueueUsbIndicator(bool value) {
-  (void)hmi_cmd_lcd_set_indicator(1U, value);
-}
-
 typedef void (*cmd_func_t)(int32_t args[], uint8_t argsCount);
 
 typedef struct {
@@ -111,23 +104,23 @@ typedef struct {
 
 static const CommandEntry s_commands[] = {
   { "A", 1, [](int32_t args[], uint8_t argsCount) {
-      (void)hmi_cmd_lcd_set_progress(0U, (uint8_t)args[0]);
-    } },
+     hmi_cmd_lcd_set_progress(0U, (uint8_t)args[0]);
+   } },
   { "B", 1, [](int32_t args[], uint8_t argsCount) {
-      (void)hmi_cmd_lcd_set_progress(1U, (uint8_t)args[0]);
-    } },
+     hmi_cmd_lcd_set_progress(1U, (uint8_t)args[0]);
+   } },
   { "C", 1, [](int32_t args[], uint8_t argsCount) {
-      (void)hmi_cmd_lcd_set_progress(2U, (uint8_t)args[0]);
-    } },
+     hmi_cmd_lcd_set_progress(2U, (uint8_t)args[0]);
+   } },
   { "D", 1, [](int32_t args[], uint8_t argsCount) {
-      (void)hmi_cmd_lcd_set_indicator(0U, args[0] != 0);
-    } },
+     hmi_cmd_lcd_set_indicator(0U, args[0] != 0);
+   } },
   { "T", 2, [](int32_t args[], uint8_t argsCount) {
-      const uint32_t hz = (uint32_t)args[0];
-      if ((args[1] < 0) || ((uint32_t)args[1] > 65535U)) return;
-      const uint32_t divider32 = (hz > 20U && hz < 20000U) ? (TONE_BASE_HZ / hz) : 0U;  // for pause
-      (void)hmi_cmd_play_tone((uint16_t)divider32, (uint16_t)args[1]);
-    } }
+     const uint32_t hz = (uint32_t)args[0];
+     if ((args[1] < 0) || ((uint32_t)args[1] > 65535U)) return;
+     const uint32_t divider32 = (hz > 20U && hz < 20000U) ? (1000000 / hz) : 0U;  // 0 for pause
+     hmi_cmd_play_tone((uint16_t)divider32, (uint16_t)args[1]);
+   } }
 };
 
 static constexpr uint8_t COMMAND_COUNT = sizeof(s_commands) / sizeof(s_commands[0]);
@@ -193,20 +186,16 @@ static void PollSerialRx(void) {
 static void HandleUsbConnChanged(void) {
   if (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U) {
     EnsureSerialStarted();
-    QueueUsbIndicator(true);
+    hmi_cmd_lcd_set_indicator(1U, true);
   } else {
     if (s_serialStarted) {
       Serial.end();
       s_serialStarted = false;
     }
-    QueueUsbIndicator(false);
+    hmi_cmd_lcd_set_indicator(1U, false);
   }
 }
 
-static void InitStartupCommands(void) {
-  (void)hmi_cmd_set_brightness(HMI_START_BRIGHTNESS);
-  (void)hmi_cmd_set_backlight_timeout(HMI_START_BL_TIMEOUT_MS);
-}
 
 static void TickHmiOnce(void) {
   const hmi_tick_result_t rc = hmi_tick();
@@ -224,7 +213,7 @@ static void TickHmiOnce(void) {
 
 void setup() {
   hmi_init(HmiLogToSerial);
-  InitStartupCommands();
+  (void)hmi_cmd_set_brightness(20);
   GUISwitchScene(&s_sceneHome);
   s_nextHmiTickMs = millis() + HMI_TICK_PERIOD_MS;
 }

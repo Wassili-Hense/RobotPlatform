@@ -87,6 +87,7 @@ static void LogMessage(bool emergency, const char* fmt, ...) {
   if (s_logCallback == nullptr || fmt == nullptr) {
     return;
   }
+
   char buf[160];
   va_list args;
   va_start(args, fmt);
@@ -122,6 +123,7 @@ static void LogStateIfChanged(void) {
   if (s_changed == 0U) {
     return;
   }
+
   const char* buttonName = "NONE";
   for (uint8_t idx = (uint8_t)HMI_DATA_BTN_ON; idx <= (uint8_t)HMI_DATA_BTN_RDN; ++idx) {
     if ((s_dataBits & (1UL << idx)) != 0UL) {
@@ -129,6 +131,7 @@ static void LogStateIfChanged(void) {
       break;
     }
   }
+
   LogMessage(false,
              "status=%1X X=%5u Y=%5u button=%s",
              (unsigned int)(s_dataBits & 0x0FU),
@@ -141,6 +144,7 @@ static void LogTxBytes(const uint8_t* data, uint8_t len) {
   if (data == nullptr || len == 0U) {
     return;
   }
+
   char buf[160];
   int pos = snprintf(buf, sizeof(buf), "TX");
   for (uint8_t i = 0U; (i < len) && (pos >= 0) && (pos < (int)sizeof(buf)); ++i) {
@@ -175,6 +179,7 @@ static bool IsTextPosValid(uint8_t x, uint8_t y, size_t textLen) {
   if (textLen == 0U) {
     return true;
   }
+
   const uint16_t xEnd = (uint16_t)x + (uint16_t)(textLen * FONT_W) - 1U;
   const uint16_t yEnd = (uint16_t)y + (uint16_t)FONT_H - 1U;
   return (xEnd <= LCD_X_MAX) && (yEnd <= LCD_Y_MAX);
@@ -295,6 +300,7 @@ void hmi_init(hmi_log_callback_t log_callback) {
   s_joyX = 0U;
   s_joyY = 0U;
   s_logCallback = log_callback;
+
   s_sysBeep = { 0U, 0U, false };
   s_sysBrightness = { 0U, false };
   s_sysBlTimeout = { 0U, false };
@@ -371,11 +377,13 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
+
     case HMI_SYS_CMD_BRIGHTNESS: {
       const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, s_sysBrightness.level };
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
+
     case HMI_SYS_CMD_BL_TIMEOUT: {
       uint8_t data[5] = {
         CMD_BACKLIGHT_TIMEOUT,
@@ -387,6 +395,7 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
+
     case HMI_SYS_CMD_INDICATOR0:
     case HMI_SYS_CMD_INDICATOR1: {
       const uint8_t index = (type == HMI_SYS_CMD_INDICATOR0) ? 0U : 1U;
@@ -394,6 +403,7 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), true);
       break;
     }
+
     case HMI_SYS_CMD_PROGRESS0:
     case HMI_SYS_CMD_PROGRESS1:
     case HMI_SYS_CMD_PROGRESS2: {
@@ -402,6 +412,7 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), true);
       break;
     }
+
     default:
       return;
   }
@@ -411,35 +422,35 @@ void hmi_sysSend(void) {
   }
 }
 
-hmi_cmd_result_t hmi_cmd_set_backlight_timeout(uint32_t timeout_ms) {
+void hmi_cmd_set_backlight_timeout(uint32_t timeout_ms) {
   if (!s_initialized) {
     LogError("hmi_cmd_set_backlight_timeout", "NOT_INITIALIZED");
-    return HMI_CMD_ERR_NOT_INITIALIZED;
+    return;
   }
+
   s_sysBlTimeout.timeoutMs = timeout_ms;
   s_sysBlTimeout.hasData = true;
-  return HMI_CMD_OK;
 }
 
-hmi_cmd_result_t hmi_cmd_set_brightness(uint8_t level) {
+void hmi_cmd_set_brightness(uint8_t level) {
   if (!s_initialized) {
     LogError("hmi_cmd_set_brightness", "NOT_INITIALIZED");
-    return HMI_CMD_ERR_NOT_INITIALIZED;
+    return;
   }
+
   s_sysBrightness.level = level;
   s_sysBrightness.hasData = true;
-  return HMI_CMD_OK;
 }
 
-hmi_cmd_result_t hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms) {
+void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms) {
   if (!s_initialized) {
     LogError("hmi_cmd_play_tone", "NOT_INITIALIZED");
-    return HMI_CMD_ERR_NOT_INITIALIZED;
+    return;
   }
+
   s_sysBeep.divider = divider;
   s_sysBeep.delayMs = delay_ms;
   s_sysBeep.hasData = true;
-  return HMI_CMD_OK;
 }
 
 hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color) {
@@ -463,6 +474,7 @@ hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_col
     LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
     return HMI_CMD_ERR_INVALID_ARG;
   }
+
   const size_t textLen = strlen(text);
   if ((textLen > 26U) || !IsPrintableAscii(text) || !IsTextPosValid(x, y, textLen)) {
     LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
@@ -496,30 +508,30 @@ hmi_cmd_result_t hmi_cmd_lcd_draw_marker(uint8_t x, uint8_t y, uint8_t index, ui
   return SendCommand("hmi_cmd_lcd_draw_marker", data, sizeof(data), true);
 }
 
-hmi_cmd_result_t hmi_cmd_lcd_set_indicator(uint8_t index, bool state) {
+void hmi_cmd_lcd_set_indicator(uint8_t index, bool state) {
   if (index > 1U) {
     LogError("hmi_cmd_lcd_set_indicator", "INVALID_ARG");
-    return HMI_CMD_ERR_INVALID_ARG;
+    return;
   }
   if (!s_initialized) {
     LogError("hmi_cmd_lcd_set_indicator", "NOT_INITIALIZED");
-    return HMI_CMD_ERR_NOT_INITIALIZED;
+    return;
   }
+
   s_sysIndicator[index].value = state ? 1U : 0U;
   s_sysIndicator[index].hasData = true;
-  return HMI_CMD_OK;
 }
 
-hmi_cmd_result_t hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value) {
+void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value) {
   if (index > 2U) {
     LogError("hmi_cmd_lcd_set_progress", "INVALID_ARG");
-    return HMI_CMD_ERR_INVALID_ARG;
+    return;
   }
   if (!s_initialized) {
     LogError("hmi_cmd_lcd_set_progress", "NOT_INITIALIZED");
-    return HMI_CMD_ERR_NOT_INITIALIZED;
+    return;
   }
+
   s_sysProgress[index].value = value;
   s_sysProgress[index].hasData = true;
-  return HMI_CMD_OK;
 }

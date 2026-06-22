@@ -104,4 +104,4 @@ void GUISwitchScene(gui_scene_t* scene);
 gui_scene_t* GUIGetActiveScene(void);
 bool GUIServiceActiveScene(void);
 
-#endif // GUI_H
+#endif  // GUI_H
