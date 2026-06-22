@@ -28,18 +28,18 @@ typedef enum {
 } hmi_data_idx_t;
 
 typedef enum {
-    HMI_TICK_OK                  = 0x0000,
-    HMI_TICK_ERR_NOT_INITIALIZED = 0x0001,
-    HMI_TICK_ERR_I2C_REQUEST     = 0x0002,
-    HMI_TICK_ERR_I2C_READ        = 0x0004
+    HMI_TICK_OK                    = 0x0000,
+    HMI_TICK_ERR_NOT_INITIALIZED   = 0x0001,
+    HMI_TICK_ERR_I2C_REQUEST       = 0x0002,
+    HMI_TICK_ERR_I2C_READ          = 0x0004
 } hmi_tick_result_t;
 
 typedef enum {
-    HMI_CMD_OK                  = 0,
-    HMI_CMD_ERR_NOT_INITIALIZED = 1,
-    HMI_CMD_ERR_INVALID_ARG     = 2,
-    HMI_CMD_ERR_NOT_READY       = 3,
-    HMI_CMD_ERR_I2C_TX          = 4
+    HMI_CMD_OK                     = 0,
+    HMI_CMD_ERR_NOT_INITIALIZED    = 1,
+    HMI_CMD_ERR_INVALID_ARG        = 2,
+    HMI_CMD_ERR_NOT_READY          = 3,
+    HMI_CMD_ERR_I2C_TX             = 4
 } hmi_cmd_result_t;
 
 typedef void (*hmi_log_callback_t)(const char *text, bool emergency);
@@ -47,7 +47,7 @@ typedef void (*hmi_log_callback_t)(const char *text, bool emergency);
 void hmi_init(hmi_log_callback_t log_callback);
 hmi_tick_result_t hmi_tick(void);
 uint16_t hmi_get(hmi_data_idx_t idx);
-hmi_data_idx_t hmi_next_changed(void);
+bool hmi_changed(hmi_data_idx_t idx);
 
 hmi_cmd_result_t hmi_cmd_set_backlight_timeout(uint32_t timeout_ms);
 hmi_cmd_result_t hmi_cmd_set_brightness(uint8_t level);
