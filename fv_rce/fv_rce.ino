@@ -18,6 +18,7 @@ static hmis_cmd_t s_hmisUsbSt = HMIS_INDICATOR(1);
 static hmis_cmd_t s_hmisBattery = HMIS_PROGRESS(0);
 static hmis_cmd_t s_hmisRssiRx = HMIS_PROGRESS(1);
 static hmis_cmd_t s_hmisRssiTx = HMIS_PROGRESS(2);
+
 static hmis_cmd_t* s_hmiSys[] = {
   &s_cmdBeep,
   &s_hmisRfSt,
@@ -27,11 +28,16 @@ static hmis_cmd_t* s_hmiSys[] = {
   &s_hmisRssiTx
 };
 
-static hmig_component_t s_sceneMainItems[] = {
-  HMIG_CLS(0x0000U),
-  HMIG_J_VIEW()
+static HmigClsComponent s_sceneMainCls(0x0000U);
+static HmigJViewComponent s_sceneMainJView;
+static HmigComponent* s_sceneMainItems[] = {
+  &s_sceneMainCls,
+  &s_sceneMainJView
 };
-static hmig_scene_t s_sceneMain = HMIG_SCENE(s_sceneMainItems);
+static hmig_scene_t s_sceneMain = {
+  s_sceneMainItems,
+  sizeof(s_sceneMainItems) / sizeof(s_sceneMainItems[0])
+};
 
 static uint32_t s_nextHmiTickMs = 0U;
 static bool s_serialStarted = false;
@@ -117,7 +123,6 @@ static bool ParseInt32(const char* text, int32_t* outValue) {
   long value = strtol(text, &endPtr, 10);
   if (*endPtr != '\0') return false;
   if ((value < INT32_MIN) || (value > INT32_MAX)) return false;
-
   *outValue = (int32_t)value;
   return true;
 }
@@ -166,7 +171,6 @@ static void PollSerialRx(void) {
       }
       continue;
     }
-
     if ((s_serialLineLen + 1U) < SERIAL_LINE_CAP) {
       s_serialLine[s_serialLineLen++] = ch;
     } else {
@@ -215,7 +219,6 @@ void setup() {
 
 void loop() {
   PollSerialRx();
-
   const uint32_t now = millis();
   if ((int32_t)(now - s_nextHmiTickMs) >= 0) {
     TickHmiOnce();
