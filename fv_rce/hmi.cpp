@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-//#define DEBUG_HMI 1
+// #define DEBUG_HMI 1
 
 static constexpr uint8_t I2C_ADDR = 0x14;
 static constexpr int I2C_SDA = 21;
@@ -25,13 +25,6 @@ static constexpr uint8_t CMD_LCD_DRAW_TEXT = 0x13;
 static constexpr uint8_t CMD_LCD_SET_BG = 0x14;
 static constexpr uint8_t CMD_LCD_INDICATOR = 0x20;
 static constexpr uint8_t CMD_LCD_PROGRESS = 0x21;
-
-static constexpr uint8_t LCD_X_MIN = 5U;
-static constexpr uint8_t LCD_X_MAX = 154U;
-static constexpr uint8_t LCD_Y_MIN = 5U;
-static constexpr uint8_t LCD_Y_MAX = 79U;
-static constexpr uint8_t FONT_W = 7U;
-static constexpr uint8_t FONT_H = 10U;
 
 enum hmi_sys_cmd_type_t {
   HMI_SYS_CMD_BEEP = 0,
@@ -160,10 +153,6 @@ static void LogStateIfChanged(void) {}
 static void LogTxBytes(const uint8_t*, uint8_t) {}
 #endif
 
-static bool IsPointInLcdArea(uint8_t x, uint8_t y) {
-  return (x >= LCD_X_MIN) && (x <= LCD_X_MAX) && (y >= LCD_Y_MIN) && (y <= LCD_Y_MAX);
-}
-
 static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len, bool isLcd) {
   if (!s_initialized) {
     LogError(funcName, "NOT_INITIALIZED");
@@ -192,13 +181,13 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
   LogTxBytes(data, len);
   return HMI_CMD_OK;
 }
-
+static uint16_t abs2(uint16_t a, uint16_t b){
+  return (a>b)?(a-b):(b-a);
+}
 static void ParsePacket(const uint8_t* rx) {
   const uint16_t word0 = (uint16_t)((uint16_t)rx[0] | ((uint16_t)rx[1] << 8));
   const uint16_t joyX = (uint16_t)(((uint16_t)(rx[3] & 0x0FU) << 8) | (uint16_t)rx[2]);
   const uint16_t joyY = (uint16_t)(((uint16_t)(rx[5] & 0x0FU) << 8) | (uint16_t)rx[4]);
-  const bool joyXChanged = ((rx[3] & 0x80U) != 0U);
-  const bool joyYChanged = ((rx[5] & 0x80U) != 0U);
 
   uint32_t newBits = s_dataBits;
   newBits = set_bit(newBits, HMI_DATA_STAT_LCD_BUSY, (word0 & (1U << STATUS_BIT_LCD_BUSY)) ? 1U : 0U);
@@ -212,11 +201,11 @@ static void ParsePacket(const uint8_t* rx) {
   s_lcdSendAllowed = ((word0 & (1U << STATUS_BIT_LCD_BUSY)) == 0U);
   s_changed = (s_dataBits ^ newBits);
 
-  if ((joyX != s_joyX) || joyXChanged) {
+  if (abs2(joyX, s_joyX) > 2) {
     s_joyX = joyX;
     s_changed |= (1UL << HMI_DATA_JOY_X);
   }
-  if ((joyY != s_joyY) || joyYChanged) {
+  if (abs2(joyY, s_joyY) > 2) {
     s_joyY = joyY;
     s_changed |= (1UL << HMI_DATA_JOY_Y);
   }
@@ -287,7 +276,7 @@ void hmi_init(hmi_log_callback_t log_callback) {
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
-  Wire.setTimeOut(2);
+  Wire.setTimeOut(10);
   s_initialized = true;
 }
 
@@ -469,11 +458,6 @@ hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_col
 }
 
 hmi_cmd_result_t hmi_cmd_lcd_draw_marker(uint8_t x, uint8_t y, uint8_t index, uint16_t rgb565_color) {
-  if (!IsPointInLcdArea(x, y)) {
-    LogError("hmi_cmd_lcd_draw_marker", "INVALID_ARG");
-    return HMI_CMD_ERR_INVALID_ARG;
-  }
-
   uint8_t data[6];
   data[0] = CMD_LCD_DRAW_MARKER;
   data[1] = x;

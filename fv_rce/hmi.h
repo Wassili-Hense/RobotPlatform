@@ -36,8 +36,8 @@ typedef enum {
 
 typedef enum {
     HMI_CMD_OK                  = 0,
-    HMI_CMD_ERR_NOT_INITIALIZED = 1,
-    HMI_CMD_ERR_INVALID_ARG     = 2,
+    HMI_CMD_ERR_NOT_INITIALIZED = 1,  // TODO: log_callback(, emergency = false)
+    HMI_CMD_ERR_INVALID_ARG     = 2,  // TODO: log_callback(, emergency = false)  
     HMI_CMD_ERR_NOT_READY       = 3,
     HMI_CMD_ERR_I2C_TX          = 4
 } hmi_cmd_result_t;

@@ -99,23 +99,6 @@ static void GUISceneLeave(gui_scene_t* scene) {
   }
 }
 
-static bool GUISceneService(gui_scene_t* scene) {
-  if ((scene == nullptr) || (scene->components == nullptr)) return false;
-  GUIMenuItemComponent::EnsureSceneSelection(scene);
-  bool sent = false;
-  for (size_t i = 0U; i < scene->componentCount; ++i) {
-    GUIComponent* component = scene->components[i];
-    if (component == nullptr) continue;
-    const bool handled = sent ? component->Process() : component->ProcessAndSend();
-    if (handled) {
-      if (s_guiActiveScene != scene) return false;
-      sent = true;
-    } else if (s_guiActiveScene != scene) {
-      return false;
-    }
-  }
-  return sent;
-}
 
 GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
   : m_color(color),
@@ -124,7 +107,7 @@ GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
     m_nextKeepAliveMs(0U) {
 }
 
-bool GUIClsComponent::SendBacklightKeepAlive(void) {
+bool GUIClsComponent::SendBacklightKeepOn(void) {
   if (!m_highlight) return false;
   const uint32_t now = millis();
   if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
@@ -152,7 +135,7 @@ bool GUIClsComponent::ProcessAndSend(void) {
     }
     return true;
   }
-  return SendBacklightKeepAlive();
+  return SendBacklightKeepOn();
 }
 
 bool GUIClsComponent::Exit(void) {
@@ -187,13 +170,10 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode,
     m_windowMinY(0U),
     m_windowMaxY(4095U),
     m_phase(GUI_J_VIEW_PHASE_IDLE) {
-}
-
-void GUIJViewComponent::EnsureTrackCalibrationLoaded(void) {
-  if ((m_mode != GUI_J_VIEW_MODE_TRACK) || m_trackCalLoaded) return;
-  GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
-  m_trackCalLoaded = true;
-  UpdateWindow();
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && ! m_trackCalLoaded){
+    GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
+    m_trackCalLoaded = true;
+  }
 }
 
 void GUIJViewComponent::UpdateWindow(void) {
@@ -244,10 +224,10 @@ uint8_t GUIJViewComponent::MapAxisY(uint16_t value) const {
 bool GUIJViewComponent::SaveCalibration(void) {
   if (!m_hasSample || (m_axisX == nullptr) || (m_axisY == nullptr)) return false;
   if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
-    m_axisX->cMin = m_minX;
-    m_axisX->cMax = m_maxX;
-    m_axisY->cMin = m_minY;
-    m_axisY->cMax = m_maxY;
+    m_axisX->cMin = m_minX - 4;
+    m_axisX->cMax = m_maxX + 4;
+    m_axisY->cMin = m_minY - 4;
+    m_axisY->cMax = m_maxY + 4;
   } else if (m_mode == GUI_J_VIEW_MODE_CAL_EDGE) {
     m_axisX->eMin = m_minX;
     m_axisX->eMax = m_maxX;
@@ -292,7 +272,6 @@ bool GUIJViewComponent::HandleButtons(void) {
 }
 
 bool GUIJViewComponent::Update(void) {
-  EnsureTrackCalibrationLoaded();
   const bool backlightOn = (hmi_get(HMI_DATA_STAT_BL_ON) != 0U);
   if (!backlightOn) {
     if ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible) {
@@ -362,7 +341,6 @@ bool GUIJViewComponent::Enter(void) {
   if (m_mode != GUI_J_VIEW_MODE_TRACK) {
     m_trackCalLoaded = false;
   }
-  EnsureTrackCalibrationLoaded();
   UpdateWindow();
   m_phase = GUI_J_VIEW_PHASE_IDLE;
   return false;
@@ -430,19 +408,15 @@ bool GUIHotKeyComponent::Enter(void) {
   return false;
 }
 
-bool GUIHotKeyComponent::ProcessImpl(void) {
+bool GUIHotKeyComponent::Process(void) {
   if (hmi_changed(m_idx) && (hmi_get(m_idx) != 0U) && (m_targetScene != nullptr)) {
     GUISwitchScene(m_targetScene);
   }
   return false;
 }
 
-bool GUIHotKeyComponent::Process(void) {
-  return ProcessImpl();
-}
-
 bool GUIHotKeyComponent::ProcessAndSend(void) {
-  return ProcessImpl();
+  return Process();
 }
 
 bool GUIHotKeyComponent::Exit(void) {
@@ -779,5 +753,18 @@ gui_scene_t* GUIGetActiveScene(void) {
 bool GUIServiceActiveScene(void) {
   gui_scene_t* const scene = s_guiActiveScene;
   if (scene == nullptr) return false;
-  return GUISceneService(scene);
+  if ((scene == nullptr) || (scene->components == nullptr)) return false;
+  bool sent = false;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    GUIComponent* component = scene->components[i];
+    if (component == nullptr) continue;
+    const bool handled = sent ? component->Process() : component->ProcessAndSend();
+    if (handled) {
+      if (s_guiActiveScene != scene) return false;
+      sent = true;
+    } else if (s_guiActiveScene != scene) {
+      return false;
+    }
+  }
+  return sent;
 }

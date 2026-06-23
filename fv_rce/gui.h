@@ -44,15 +44,15 @@ enum gui_j_view_mode_t {
 class GUIComponent {
 public:
     virtual ~GUIComponent() = default;
-    virtual gui_class_id_t GetClassId(void) const = 0;
-    virtual bool Enter(void) = 0;
-    virtual bool Process(void) = 0;
-    virtual bool ProcessAndSend(void) = 0;
-    virtual bool Exit(void) = 0;
+    virtual gui_class_id_t GetClassId(void) const = 0;  // TODO: Use enum. return type uint8.
+    virtual bool Enter(void) = 0;  // TODO: bool -> void
+    virtual bool Process(void) = 0;  // TODO: bool -> void
+    virtual bool ProcessAndSend(void) = 0;  // TODO: rename Send, call {Process(); if(sent) sent = Send();}
+    virtual bool Exit(void) = 0;  // TODO: bool -> void
 };
 
 template<typename T>
-class GUIComponentTyped : public GUIComponent {
+class GUIComponentTyped : public GUIComponent {  // TODO: remove
 public:
     static gui_class_id_t ClassId(void) {
         return GUIClassIdOf<T>();
@@ -70,7 +70,7 @@ public:
     bool ProcessAndSend(void) override;
     bool Exit(void) override;
 private:
-    bool SendBacklightKeepAlive(void);
+    bool SendBacklightKeepOn(void);
     uint16_t m_color;
     bool m_highlight;
     bool m_pendingClear;
@@ -98,7 +98,6 @@ private:
     bool HandleButtons(void);
     bool SaveCalibration(void);
     void UpdateWindow(void);
-    void EnsureTrackCalibrationLoaded(void);
     uint8_t MapAxisX(uint16_t value) const;
     uint8_t MapAxisY(uint16_t value) const;
     gui_j_view_mode_t m_mode;
@@ -134,7 +133,6 @@ public:
     bool ProcessAndSend(void) override;
     bool Exit(void) override;
 private:
-    bool ProcessImpl(void);
     hmi_data_idx_t m_idx;
     gui_scene_t* m_targetScene;
 };
@@ -206,7 +204,7 @@ private:
 
     static bool s_loaded;
     static uint8_t s_storedIndex;
-    static uint8_t s_actualIndex;
+    static uint8_t s_actualIndex;  // TDOD: remove static
 };
 
 uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);

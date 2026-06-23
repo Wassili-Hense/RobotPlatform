@@ -1,4 +1,3 @@
-#define DEBUG_HMI
 #include <Arduino.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -8,18 +7,14 @@
 #include "hmi.h"
 #include "gui.h"
 
-static constexpr uint32_t HMI_TICK_PERIOD_MS = 5U;
-static constexpr size_t SERIAL_LINE_CAP = 32U;
-
+static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
+static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
+// [gui]
 extern gui_scene_t s_sceneHome;
 extern gui_scene_t s_sceneMainMenu;
 extern gui_scene_t s_sceneCCentr;
 extern gui_scene_t s_sceneCEdge;
 
-static gui_axis_cal_t s_axisCalX = { 226U, 1955U, 1955U, 4028U };
-static gui_axis_cal_t s_axisCalY = { 0U, 1957U, 1958U, 4027U };
-
-// [gui]
 static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK, false);
 static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
 static GUIBrightnessComponent s_sceneHomeBrightness(0U, 0U, 0U);
@@ -68,30 +63,7 @@ static GUIComponent* s_sceneCEdgeItems[] = {
 };
 gui_scene_t s_sceneCEdge = GUI_SCENE(s_sceneCEdgeItems);
 
-// [common]
-static uint32_t s_nextHmiTickMs = 0U;
-static bool s_serialStarted = false;
-static char s_serialLine[SERIAL_LINE_CAP];
-static size_t s_serialLineLen = 0U;
-
-// [Serial]
-static void EnsureSerialStarted(void) {
-  if (!s_serialStarted) {
-    Serial.begin(115200);
-    s_serialStarted = true;
-  }
-}
-
-static void HmiLogToSerial(const char* text, bool emergency) {
-  if (emergency) {
-    EnsureSerialStarted();
-  }
-  if (!s_serialStarted || (text == nullptr)) {
-    return;
-  }
-  Serial.println(text);
-}
-
+// [Command]
 typedef void (*cmd_func_t)(int32_t args[], uint8_t argsCount);
 typedef struct {
   const char* name;
@@ -126,7 +98,7 @@ static const CommandEntry s_commands[] = {
 };
 
 static constexpr uint8_t COMMAND_COUNT = sizeof(s_commands) / sizeof(s_commands[0]);
-static constexpr uint8_t MAX_ARGS = 8U;
+static constexpr uint8_t MAX_ARGS = 2U;
 
 static bool ParseInt32(const char* text, int32_t* outValue) {
   if ((text == nullptr) || (*text == '\0') || (outValue == nullptr)) return false;
@@ -162,6 +134,12 @@ static void ParseAndDispatch(char* line) {
   if (argsCount < cmd->argsCount) return;
   cmd->func(args, argsCount);
 }
+// [Serial]
+static constexpr size_t SERIAL_LINE_CAP = 32U;
+
+static bool s_serialStarted = false;
+static char s_serialLine[SERIAL_LINE_CAP];
+static size_t s_serialLineLen = 0U;
 
 static void PollSerialRx(void) {
   while (s_serialStarted && (Serial.available() > 0)) {
@@ -181,7 +159,22 @@ static void PollSerialRx(void) {
     }
   }
 }
+static void EnsureSerialStarted(void) {
+  if (!s_serialStarted) {
+    Serial.begin(115200);
+    s_serialStarted = true;
+  }
+}
 
+static void HmiLogToSerial(const char* text, bool emergency) {
+  if (emergency) {
+    EnsureSerialStarted();
+  }
+  if (!s_serialStarted || (text == nullptr)) {
+    return;
+  }
+  Serial.println(text);
+}
 // [hmi]
 static void HandleUsbConnChanged(void) {
   if (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U) {
@@ -195,18 +188,21 @@ static void HandleUsbConnChanged(void) {
     hmi_cmd_lcd_set_indicator(1U, false);
   }
 }
+// [common]
+static constexpr uint32_t TICK_PERIOD_MS = 5U;
+static uint32_t s_nextHmiTickMs = 0U;
 
 void setup() {
   hmi_init(HmiLogToSerial);
   GUISwitchScene(&s_sceneHome);
-  s_nextHmiTickMs = millis() + HMI_TICK_PERIOD_MS;
+  s_nextHmiTickMs = millis() + TICK_PERIOD_MS;
 }
 
 void loop() {
   PollSerialRx();
   const uint32_t now = millis();
   if ((int32_t)(now - s_nextHmiTickMs) >= 0) {
-    s_nextHmiTickMs += HMI_TICK_PERIOD_MS;
+    s_nextHmiTickMs += TICK_PERIOD_MS;
     if (hmi_tick() == HMI_TICK_OK) {
       if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
         HandleUsbConnChanged();
