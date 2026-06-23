@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
+//#define DEBUG_HMI 1
+
 static constexpr uint8_t I2C_ADDR = 0x14;
 static constexpr int I2C_SDA = 21;
 static constexpr int I2C_SCL = 22;
@@ -158,33 +160,6 @@ static void LogStateIfChanged(void) {}
 static void LogTxBytes(const uint8_t*, uint8_t) {}
 #endif
 
-static bool IsPrintableAscii(const char* text) {
-  if (text == nullptr) {
-    return false;
-  }
-
-  for (size_t i = 0U; text[i] != '\0'; ++i) {
-    const uint8_t c = (uint8_t)text[i];
-    if (c < 32U || c > 126U) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static bool IsTextPosValid(uint8_t x, uint8_t y, size_t textLen) {
-  if (x < LCD_X_MIN || x > LCD_X_MAX || y < LCD_Y_MIN || y > LCD_Y_MAX) {
-    return false;
-  }
-  if (textLen == 0U) {
-    return true;
-  }
-
-  const uint16_t xEnd = (uint16_t)x + (uint16_t)(textLen * FONT_W) - 1U;
-  const uint16_t yEnd = (uint16_t)y + (uint16_t)FONT_H - 1U;
-  return (xEnd <= LCD_X_MAX) && (yEnd <= LCD_Y_MAX);
-}
-
 static bool IsPointInLcdArea(uint8_t x, uint8_t y) {
   return (x >= LCD_X_MIN) && (x <= LCD_X_MAX) && (y >= LCD_Y_MIN) && (y <= LCD_Y_MAX);
 }
@@ -312,6 +287,7 @@ void hmi_init(hmi_log_callback_t log_callback) {
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
+  Wire.setTimeOut(2);
   s_initialized = true;
 }
 
@@ -326,14 +302,14 @@ hmi_tick_result_t hmi_tick(void) {
   hmi_tick_result_t result = HMI_TICK_OK;
 
   const int requested = Wire.requestFrom((int)I2C_ADDR, (int)I2C_READ_LEN, (int)true);
-  while (Wire.available() && (len < I2C_READ_LEN)) {
-    rx[len++] = (uint8_t)Wire.read();
-  }
-
   if (requested != I2C_READ_LEN) {
     LogError("hmi_tick", "I2C_REQUEST");
     result = (hmi_tick_result_t)(result | HMI_TICK_ERR_I2C_REQUEST);
   }
+  while (Wire.available() && (len < I2C_READ_LEN)) {
+    rx[len++] = (uint8_t)Wire.read();
+  }
+
   if (len != I2C_READ_LEN) {
     LogError("hmi_tick", "I2C_READ");
     result = (hmi_tick_result_t)(result | HMI_TICK_ERR_I2C_READ);
@@ -476,7 +452,7 @@ hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_col
   }
 
   const size_t textLen = strlen(text);
-  if ((textLen > 26U) || !IsPrintableAscii(text) || !IsTextPosValid(x, y, textLen)) {
+  if ((textLen > 26U)) {
     LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
     return HMI_CMD_ERR_INVALID_ARG;
   }

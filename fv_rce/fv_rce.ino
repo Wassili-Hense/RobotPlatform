@@ -13,70 +13,68 @@ static constexpr size_t SERIAL_LINE_CAP = 32U;
 
 extern gui_scene_t s_sceneHome;
 extern gui_scene_t s_sceneMainMenu;
-extern gui_scene_t s_sceneTest1;
-extern gui_scene_t s_sceneTest2;
+extern gui_scene_t s_sceneCCentr;
+extern gui_scene_t s_sceneCEdge;
 
-static GUIClsComponent s_sceneHomeCls(0x0000U);
-static GUIJViewComponent s_sceneHomeJView;
-static GUIHotKeyComponent s_sceneHomeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
+static gui_axis_cal_t s_axisCalX = { 226U, 1955U, 1955U, 4028U };
+static gui_axis_cal_t s_axisCalY = { 0U, 1957U, 1958U, 4027U };
+
+// [gui]
+static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK, false);
+static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUIBrightnessComponent s_sceneHomeBrightness(0U, 0U, 0U);
 static GUIComponent* s_sceneHomeItems[] = {
   &s_sceneHomeCls,
   &s_sceneHomeJView,
-  &s_sceneHomeHotKeyOk
+  &s_sceneHomeBrightness
 };
-gui_scene_t s_sceneHome = {
-  s_sceneHomeItems,
-  sizeof(s_sceneHomeItems) / sizeof(s_sceneHomeItems[0])
-};
+gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
-static GUIClsComponent s_sceneMainMenuCls(0x0000U);
-static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, 0x07FFU, "Main menu");
-static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(10U, 20U, "Cal. center", &s_sceneTest1);
-static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(10U, 30U, "Cal. edge", &s_sceneTest2);
+static GUIClsComponent s_sceneMainMenuCls(GUI_COLOR_BLACK, true);
+static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_CYAN, "Main menu");
+static GUIBrightnessComponent s_sceneMainMenuBrightness(1U, 118U, 10U);
+static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(10U, 25U, "Cal. center", &s_sceneCCentr);
+static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(10U, 40U, "Cal. edge", &s_sceneCEdge);
 static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneHome);
 static GUIComponent* s_sceneMainMenuItems[] = {
   &s_sceneMainMenuCls,
   &s_sceneMainMenuTitle,
+  &s_sceneMainMenuBrightness,
   &s_sceneMainMenuItemCalCenter,
   &s_sceneMainMenuItemCalEdge,
   &s_sceneMainMenuHotKeyBack
 };
-gui_scene_t s_sceneMainMenu = {
-  s_sceneMainMenuItems,
-  sizeof(s_sceneMainMenuItems) / sizeof(s_sceneMainMenuItems[0])
-};
+gui_scene_t s_sceneMainMenu = GUI_SCENE(s_sceneMainMenuItems);
 
-static GUIClsComponent s_sceneTest1Cls(0x0000U);
-static GUILabelComponent s_sceneTest1Label(40U, 40U, 0xFFFFU, "Test scene 1");
-static GUIHotKeyComponent s_sceneTest1HotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
-static GUIComponent* s_sceneTest1Items[] = {
-  &s_sceneTest1Cls,
-  &s_sceneTest1Label,
-  &s_sceneTest1HotKeyBack
+static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK, true);
+static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUILabelComponent s_sceneCalibrateBack(16U, 10U, GUI_COLOR_ORANGE, "D\n\nR\n\nO\n\nP");
+static GUILabelComponent s_sceneCalibrateOk(126U, 10U, GUI_COLOR_GREEN, "S\n\nA\n\nV\n\nE");
+static GUIComponent* s_sceneCCentrItems[] = {
+  &s_sceneCCentrCls,
+  &s_sceneCCentrJView,
+  &s_sceneCalibrateBack,
+  &s_sceneCalibrateOk
 };
-gui_scene_t s_sceneTest1 = {
-  s_sceneTest1Items,
-  sizeof(s_sceneTest1Items) / sizeof(s_sceneTest1Items[0])
-};
+gui_scene_t s_sceneCCentr = GUI_SCENE(s_sceneCCentrItems);
 
-static GUIClsComponent s_sceneTest2Cls(0x0000U);
-static GUILabelComponent s_sceneTest2Label(40U, 40U, 0xFFFFU, "Test scene 2");
-static GUIHotKeyComponent s_sceneTest2HotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
-static GUIComponent* s_sceneTest2Items[] = {
-  &s_sceneTest2Cls,
-  &s_sceneTest2Label,
-  &s_sceneTest2HotKeyBack
+static GUIClsComponent s_sceneCEdgeCls(GUI_COLOR_BLACK, true);
+static GUIJViewComponent s_sceneCEdgeJView(GUI_J_VIEW_MODE_CAL_EDGE, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUIComponent* s_sceneCEdgeItems[] = {
+  &s_sceneCEdgeCls,
+  &s_sceneCEdgeJView,
+  &s_sceneCalibrateBack,
+  &s_sceneCalibrateOk
 };
-gui_scene_t s_sceneTest2 = {
-  s_sceneTest2Items,
-  sizeof(s_sceneTest2Items) / sizeof(s_sceneTest2Items[0])
-};
+gui_scene_t s_sceneCEdge = GUI_SCENE(s_sceneCEdgeItems);
 
+// [common]
 static uint32_t s_nextHmiTickMs = 0U;
 static bool s_serialStarted = false;
 static char s_serialLine[SERIAL_LINE_CAP];
 static size_t s_serialLineLen = 0U;
 
+// [Serial]
 static void EnsureSerialStarted(void) {
   if (!s_serialStarted) {
     Serial.begin(115200);
@@ -95,7 +93,6 @@ static void HmiLogToSerial(const char* text, bool emergency) {
 }
 
 typedef void (*cmd_func_t)(int32_t args[], uint8_t argsCount);
-
 typedef struct {
   const char* name;
   uint8_t argsCount;
@@ -104,21 +101,26 @@ typedef struct {
 
 static const CommandEntry s_commands[] = {
   { "A", 1, [](int32_t args[], uint8_t argsCount) {
+     (void)argsCount;
      hmi_cmd_lcd_set_progress(0U, (uint8_t)args[0]);
    } },
   { "B", 1, [](int32_t args[], uint8_t argsCount) {
+     (void)argsCount;
      hmi_cmd_lcd_set_progress(1U, (uint8_t)args[0]);
    } },
   { "C", 1, [](int32_t args[], uint8_t argsCount) {
+     (void)argsCount;
      hmi_cmd_lcd_set_progress(2U, (uint8_t)args[0]);
    } },
   { "D", 1, [](int32_t args[], uint8_t argsCount) {
+     (void)argsCount;
      hmi_cmd_lcd_set_indicator(0U, args[0] != 0);
    } },
   { "T", 2, [](int32_t args[], uint8_t argsCount) {
+     (void)argsCount;
      const uint32_t hz = (uint32_t)args[0];
      if ((args[1] < 0) || ((uint32_t)args[1] > 65535U)) return;
-     const uint32_t divider32 = (hz > 20U && hz < 20000U) ? (1000000 / hz) : 0U;  // 0 for pause
+     const uint32_t divider32 = (hz > 20U && hz < 20000U) ? (1000000U / hz) : 0U;
      hmi_cmd_play_tone((uint16_t)divider32, (uint16_t)args[1]);
    } }
 };
@@ -141,16 +143,13 @@ static void ParseAndDispatch(char* line) {
   char* savePtr = nullptr;
   char* token = strtok_r(line, " \t", &savePtr);
   if (token == nullptr) return;
-
   uint8_t cmdIdx = 0U;
   for (; cmdIdx < COMMAND_COUNT; ++cmdIdx) {
     if (strcmp(token, s_commands[cmdIdx].name) == 0) break;
   }
   if (cmdIdx >= COMMAND_COUNT) return;
-
   const CommandEntry* cmd = &s_commands[cmdIdx];
   if (cmd->argsCount > MAX_ARGS) return;
-
   int32_t args[MAX_ARGS];
   uint8_t argsCount = 0U;
   while (true) {
@@ -183,6 +182,7 @@ static void PollSerialRx(void) {
   }
 }
 
+// [hmi]
 static void HandleUsbConnChanged(void) {
   if (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U) {
     EnsureSerialStarted();
@@ -196,24 +196,8 @@ static void HandleUsbConnChanged(void) {
   }
 }
 
-
-static void TickHmiOnce(void) {
-  const hmi_tick_result_t rc = hmi_tick();
-  if (rc != HMI_TICK_OK) return;
-
-  if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
-    HandleUsbConnChanged();
-  }
-
-  const bool sceneSent = GUIServiceActiveScene();
-  if (!sceneSent) {
-    hmi_sysSend();
-  }
-}
-
 void setup() {
   hmi_init(HmiLogToSerial);
-  (void)hmi_cmd_set_brightness(20);
   GUISwitchScene(&s_sceneHome);
   s_nextHmiTickMs = millis() + HMI_TICK_PERIOD_MS;
 }
@@ -222,7 +206,12 @@ void loop() {
   PollSerialRx();
   const uint32_t now = millis();
   if ((int32_t)(now - s_nextHmiTickMs) >= 0) {
-    TickHmiOnce();
     s_nextHmiTickMs += HMI_TICK_PERIOD_MS;
+    if (hmi_tick() == HMI_TICK_OK) {
+      if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
+        HandleUsbConnChanged();
+      }
+      if (!GUIServiceActiveScene()) hmi_sysSend();
+    }
   }
 }
