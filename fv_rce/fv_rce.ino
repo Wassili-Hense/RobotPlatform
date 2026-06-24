@@ -155,16 +155,7 @@ static void ParseAndDispatch(char* line)
     if (argsCount < cmd->argsCount) return;
     cmd->func(args, argsCount);
 }
-
-static void ServiceSerialBg(void)
-{
-    char line[SERIAL_BG_LINE_CAP];
-
-    while (serial_bg_receive_line(line, sizeof(line))) {
-        ParseAndDispatch(line);
-    }
-}
-
+// [Log]
 static void HmiLogToSerial(const char* text, bool emergency)
 {
     if (text == nullptr) {
@@ -182,14 +173,7 @@ static void HmiLogToSerial(const char* text, bool emergency)
     (void)serial_bg_send_line(text);
 }
 
-// [hmi]
-static void HandleUsbConnChanged(void)
-{
-    const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
-    serial_bg_set_connected(connected);
-    hmi_cmd_lcd_set_indicator(1U, connected);
-}
-
+// [AppTask]
 static void AppTask(void* arg)
 {
     (void)arg;
@@ -200,14 +184,23 @@ static void AppTask(void* arg)
     for (;;) {
         if (hmi_tick() == HMI_TICK_OK) {
             if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
-                HandleUsbConnChanged();
+                // HandleUsbConnChanged
+    const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
+    serial_bg_set_connected(connected);
+    hmi_cmd_lcd_set_indicator(1U, connected);
+
             }
             if (!GUIServiceActiveScene()) {
                 hmi_sysSend();
             }
-            ServiceSerialBg();
-        }
+            {
+              char line[SERIAL_BG_LINE_CAP];
 
+              if (serial_bg_receive_line(line, sizeof(line))) {
+                ParseAndDispatch(line);
+              }
+           }
+        }
         (void)xTaskDelayUntil(&lastWakeTime, periodTicks);
     }
 }

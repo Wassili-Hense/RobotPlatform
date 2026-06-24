@@ -177,10 +177,6 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode,
     m_windowMinY(0U),
     m_windowMaxY(4095U),
     m_phase(GUI_J_VIEW_PHASE_IDLE) {
-    if ((m_mode == GUI_J_VIEW_MODE_TRACK) && !m_trackCalLoaded) {
-        GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
-        m_trackCalLoaded = true;
-    }
 }
 
 void GUIJViewComponent::UpdateWindow(void) {
@@ -361,8 +357,9 @@ void GUIJViewComponent::Enter(void) {
     m_minY = 0U;
     m_maxX = 0U;
     m_maxY = 0U;
-    if (m_mode != GUI_J_VIEW_MODE_TRACK) {
-        m_trackCalLoaded = false;
+    if (!m_trackCalLoaded) {
+        GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
+        m_trackCalLoaded = true;
     }
     UpdateWindow();
     m_phase = GUI_J_VIEW_PHASE_IDLE;
@@ -677,7 +674,6 @@ GUIBrightnessComponent::GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t 
     m_actualIndex(5U),
     m_pendingSend(false),
     m_pendingDraw(false) {
-    EnsureLoaded();
 }
 
 void GUIBrightnessComponent::EnsureLoaded(void) {
