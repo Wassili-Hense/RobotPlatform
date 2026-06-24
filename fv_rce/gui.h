@@ -95,8 +95,6 @@ enum gui_j_view_phase_t {
     GUI_J_VIEW_PHASE_DRAW
 };
 
-uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);
-
 class GUIJViewComponent : public GUIComponent {
 public:
     GUIJViewComponent(gui_j_view_mode_t mode,
@@ -199,17 +197,17 @@ public:
     void Exit(void) override;
 
     void SetActive(bool active);
-    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);
-    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);
+    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);  // TODO: static function
+    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);  // TODO: static function
 
 private:
     bool Draw(bool active);
     bool ProcessNavigation(void);
     void SyncPrevActive(void);
 
-    static GUIMenuItemComponent* Cast(GUIComponent* component);
-    static const GUIMenuItemComponent* Cast(const GUIComponent* component);
-    static GUIMenuItemComponent* FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step);
+    static GUIMenuItemComponent* Cast(GUIComponent* component);  // TODO: static function
+    static const GUIMenuItemComponent* Cast(const GUIComponent* component);  // TODO: static function
+    static GUIMenuItemComponent* FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step);  // TODO: static function
 
     uint8_t m_x;
     uint8_t m_y;
@@ -246,7 +244,7 @@ private:
     uint8_t m_x;
     uint8_t m_y;
     uint8_t m_actualIndex;
-    bool m_pendingSend;
+    bool m_pendingSend;  // TODO: not necesary. Call hmi_cmd_set_brightness direct. sendet hmi
     bool m_pendingDraw;
 
     static bool s_loaded;

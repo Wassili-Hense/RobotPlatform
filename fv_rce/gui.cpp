@@ -49,10 +49,8 @@ GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
 
 bool GUIClsComponent::SendBacklightKeepOn(void) {
     if (!m_highlight) return false;
-
     const uint32_t now = millis();
     if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
-
     hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
     m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
     return true;
@@ -67,16 +65,13 @@ void GUIClsComponent::Process(void) {
 }
 
 bool GUIClsComponent::Send(void) {
-    if (m_pendingClear) {
-        if (!GUIIsLcdReady()) return false;
-
+    if (m_pendingClear && GUIIsLcdReady()) {
         const hmi_cmd_result_t rc = hmi_cmd_lcd_clear(m_color);
         if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
             m_pendingClear = false;
         }
         return true;
     }
-
     return SendBacklightKeepOn();
 }
 
@@ -94,37 +89,27 @@ static constexpr uint8_t GUI_J_VIEW_OUT_MAX_X = 114U;
 static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 10U;
 static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
 
-static uint8_t GUIMapLinearWindow(uint16_t value,
-                                  uint16_t inMin,
-                                  uint16_t inMax,
-                                  uint8_t outMin,
-                                  uint8_t outMax) {
+static uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
     if (outMax <= outMin) return outMin;
-    if (inMax <= inMin) return (uint8_t)(outMin + ((outMax - outMin) / 2U));
-    if (value <= inMin) return outMin;
-    if (value >= inMax) return outMax;
-    return (uint8_t)(outMin + ((((uint32_t)(value - inMin)) * (uint32_t)(outMax - outMin)) /
-                                (uint32_t)(inMax - inMin)));
+    if (value > 4095U) value = 4095U;
+    return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
 }
 
-static uint8_t GUIMapCalibratedValue(uint16_t value,
-                                     const gui_axis_cal_t& cal,
-                                     uint8_t outMin,
-                                     uint8_t outMax) {
-    if (outMax <= outMin) return outMin;
+static uint8_t GUIMapLinearWindow(uint16_t value, uint16_t inMin, uint16_t inMax, uint8_t outMin, uint8_t outMax) {
+    if (value <= inMin) return outMin;
+    if (value >= inMax) return outMax;
+    return (uint8_t)(outMin + ((((uint32_t)(value - inMin)) * (uint32_t)(outMax - outMin)) / (uint32_t)(inMax - inMin)));
+}
 
+static uint8_t GUIMapCalibratedValue(uint16_t value, const gui_axis_cal_t& cal, uint8_t outMin, uint8_t outMax) {
     const uint8_t outMid = (uint8_t)(outMin + ((outMax - outMin) / 2U));
     const uint16_t leftMin = cal.eMin;
-    const uint16_t leftMax = (cal.cMin >= cal.eMin) ? cal.cMin : cal.eMin;
-    const uint16_t rightMin = (cal.eMax >= cal.cMax) ? cal.cMax : cal.eMax;
+    const uint16_t leftMax = cal.cMin;
+    const uint16_t rightMin = cal.cMax;
     const uint16_t rightMax = cal.eMax;
 
-    if (value <= leftMax) {
-        return GUIMapLinearWindow(value, leftMin, leftMax, outMin, outMid);
-    }
-    if (value >= rightMin) {
-        return GUIMapLinearWindow(value, rightMin, rightMax, outMid, outMax);
-    }
+    if (value <= leftMax) return GUIMapLinearWindow(value, leftMin, leftMax, outMin, outMid);
+    if (value >= rightMin) return GUIMapLinearWindow(value, rightMin, rightMax, outMid, outMax);
     return outMid;
 }
 
@@ -150,10 +135,7 @@ uint8_t GUIJViewComponent::GetClassId(void) const {
     return (uint8_t)GUI_CLASS_J_VIEW;
 }
 
-GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode,
-                                     gui_axis_cal_t* axisX,
-                                     gui_axis_cal_t* axisY,
-                                     gui_scene_t* targetScene)
+GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axisX, gui_axis_cal_t* axisY, gui_scene_t* targetScene)
   : m_mode(mode),
     m_axisX(axisX),
     m_axisY(axisY),
@@ -212,17 +194,13 @@ void GUIJViewComponent::UpdateWindow(void) {
 }
 
 uint8_t GUIJViewComponent::MapAxisX(uint16_t value) const {
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
-        return GUIMapLinearWindow(value, m_windowMinX, m_windowMaxX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
-    }
+    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinX, m_windowMaxX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
     if (m_axisX == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
     return GUIMapCalibratedValue(value, *m_axisX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
 }
 
 uint8_t GUIJViewComponent::MapAxisY(uint16_t value) const {
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
-        return GUIMapLinearWindow(value, m_windowMinY, m_windowMaxY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
-    }
+    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinY, m_windowMaxY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
     if (m_axisY == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
     return GUIMapCalibratedValue(value, *m_axisY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
 }
@@ -262,21 +240,15 @@ bool GUIJViewComponent::SaveCalibration(void) {
 }
 
 bool GUIJViewComponent::HandleButtons(void) {
-    if (m_mode == GUI_J_VIEW_MODE_TRACK) {
-        if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
-            GUISwitchScene(m_targetScene);
-            return true;
-        }
-        return false;
-    }
-
     if (hmi_changed(HMI_DATA_BTN_BACK) && (hmi_get(HMI_DATA_BTN_BACK) != 0U) && (m_targetScene != nullptr)) {
         GUISwitchScene(m_targetScene);
         return true;
     }
 
     if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
-        (void)SaveCalibration();
+        if (m_mode != GUI_J_VIEW_MODE_TRACK) {
+          (void)SaveCalibration();
+        }
         GUISwitchScene(m_targetScene);
         return true;
     }
@@ -361,7 +333,7 @@ void GUIJViewComponent::Enter(void) {
         GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
         m_trackCalLoaded = true;
     }
-    UpdateWindow();
+    //UpdateWindow();
     m_phase = GUI_J_VIEW_PHASE_IDLE;
 }
 
@@ -773,13 +745,6 @@ void GUIBrightnessComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 // Section: Common
 // -----------------------------------------------------------------------------
-
-uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
-    if (outMax <= outMin) return outMin;
-    if (value > 4095U) value = 4095U;
-    return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
-}
-
 static void GUISceneEnter(gui_scene_t* scene) {
     if ((scene == nullptr) || (scene->components == nullptr)) return;
     for (size_t i = 0U; i < scene->componentCount; ++i) {
