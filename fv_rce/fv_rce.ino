@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "hmi.h"
 #include "gui.h"
 #include "serial_bg.h"
@@ -102,6 +104,12 @@ static const CommandEntry s_commands[] = {
 
 static constexpr uint8_t COMMAND_COUNT = sizeof(s_commands) / sizeof(s_commands[0]);
 static constexpr uint8_t MAX_ARGS = 2U;
+static constexpr uint32_t APP_TASK_PERIOD_MS = 5U;
+static constexpr BaseType_t APP_TASK_CORE_ID = 1;
+static constexpr UBaseType_t APP_TASK_PRIORITY = 2;
+static constexpr uint32_t APP_TASK_STACK_SIZE = 4096U;
+
+static TaskHandle_t s_appTaskHandle = nullptr;
 
 static bool ParseInt32(const char* text, int32_t* outValue)
 {
@@ -182,30 +190,43 @@ static void HandleUsbConnChanged(void)
     hmi_cmd_lcd_set_indicator(1U, connected);
 }
 
-// [common]
-static constexpr uint32_t TICK_PERIOD_MS = 5U;
-static uint32_t s_nextHmiTickMs = 0U;
+static void AppTask(void* arg)
+{
+    (void)arg;
+
+    TickType_t lastWakeTime = xTaskGetTickCount();
+    const TickType_t periodTicks = pdMS_TO_TICKS(APP_TASK_PERIOD_MS);
+
+    for (;;) {
+        if (hmi_tick() == HMI_TICK_OK) {
+            if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
+                HandleUsbConnChanged();
+            }
+            if (!GUIServiceActiveScene()) {
+                hmi_sysSend();
+            }
+            ServiceSerialBg();
+        }
+
+        (void)xTaskDelayUntil(&lastWakeTime, periodTicks);
+    }
+}
 
 void setup()
 {
     (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
     hmi_init(HmiLogToSerial);
     GUISwitchScene(&s_sceneHome);
-    s_nextHmiTickMs = millis() + TICK_PERIOD_MS;
+    (void)xTaskCreatePinnedToCore(AppTask,
+                                  "AppTask",
+                                  APP_TASK_STACK_SIZE,
+                                  nullptr,
+                                  APP_TASK_PRIORITY,
+                                  &s_appTaskHandle,
+                                  APP_TASK_CORE_ID);
 }
 
 void loop()
 {
-    ServiceSerialBg();
-
-    const uint32_t now = millis();
-    if ((int32_t)(now - s_nextHmiTickMs) >= 0) {
-        s_nextHmiTickMs += TICK_PERIOD_MS;
-        if (hmi_tick() == HMI_TICK_OK) {
-            if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {
-                HandleUsbConnChanged();
-            }
-            if (!GUIServiceActiveScene()) hmi_sysSend();
-        }
-    }
+    vTaskDelay(pdMS_TO_TICKS(1000U));
 }
