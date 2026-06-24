@@ -26,7 +26,7 @@ static GUIComponent* s_sceneHomeItems[] = {
 gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
 static GUIClsComponent s_sceneMainMenuCls(GUI_COLOR_BLACK, true);
-static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_CYAN, "Main menu");
+static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_GRAY, "Main menu");
 static GUIBrightnessComponent s_sceneMainMenuBrightness(1U, 118U, 10U);
 static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(10U, 25U, "Cal. center", &s_sceneCCentr);
 static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(10U, 40U, "Cal. edge", &s_sceneCEdge);

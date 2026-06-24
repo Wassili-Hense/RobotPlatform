@@ -4,12 +4,7 @@
 #include <Preferences.h>
 #include <stdio.h>
 
-// -----------------------------------------------------------------------------
-// Section: Common
-// -----------------------------------------------------------------------------
-
 namespace {
-
 enum gui_class_id_t : uint8_t {
     GUI_CLASS_CLS = 1,
     GUI_CLASS_J_VIEW,
@@ -20,22 +15,84 @@ enum gui_class_id_t : uint8_t {
 };
 
 static gui_scene_t* s_guiActiveScene = nullptr;
+}
 
-static constexpr uint8_t GUI_J_VIEW_OUT_MIN_X = 45U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MAX_X = 114U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 10U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
+// -----------------------------------------------------------------------------
+// Section: GUIComponent
+// -----------------------------------------------------------------------------
 
+// Base interface only.
+
+// -----------------------------------------------------------------------------
+// Section: GUIClsComponent
+// -----------------------------------------------------------------------------
+
+namespace {
 static constexpr uint32_t GUI_CLS_KEEPALIVE_PERIOD_MS = 10000U;
 static constexpr uint16_t GUI_CLS_KEEPALIVE_TIMEOUT_MS = 15000U;
-
-static constexpr uint8_t GUI_BRIGHTNESS_STEP_TABLE[10] = {
-    1U, 2U, 3U, 5U, 8U, 13U, 22U, 36U, 61U, 127U
-};
 
 static bool GUIIsLcdReady(void) {
     return (hmi_get(HMI_DATA_STAT_LCD_BUSY) == 0U);
 }
+}
+
+uint8_t GUIClsComponent::GetClassId(void) const {
+    return (uint8_t)GUI_CLASS_CLS;
+}
+
+GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
+  : m_color(color),
+    m_highlight(highlight),
+    m_pendingClear(false),
+    m_nextKeepAliveMs(0U) {
+}
+
+bool GUIClsComponent::SendBacklightKeepOn(void) {
+    if (!m_highlight) return false;
+
+    const uint32_t now = millis();
+    if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
+
+    hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
+    m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
+    return true;
+}
+
+void GUIClsComponent::Enter(void) {
+    m_pendingClear = true;
+    m_nextKeepAliveMs = millis();
+}
+
+void GUIClsComponent::Process(void) {
+}
+
+bool GUIClsComponent::Send(void) {
+    if (m_pendingClear) {
+        if (!GUIIsLcdReady()) return false;
+
+        const hmi_cmd_result_t rc = hmi_cmd_lcd_clear(m_color);
+        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
+            m_pendingClear = false;
+        }
+        return true;
+    }
+
+    return SendBacklightKeepOn();
+}
+
+void GUIClsComponent::Exit(void) {
+    m_pendingClear = false;
+}
+
+// -----------------------------------------------------------------------------
+// Section: GUIJViewComponent
+// -----------------------------------------------------------------------------
+
+namespace {
+static constexpr uint8_t GUI_J_VIEW_OUT_MIN_X = 45U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MAX_X = 114U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 10U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
 
 static uint8_t GUIMapLinearWindow(uint16_t value,
                                   uint16_t inMin,
@@ -87,171 +144,10 @@ static void GUILoadCalibrationFromPreferences(gui_axis_cal_t* axisX, gui_axis_ca
     axisY->eMax = prefs.getUShort("yemax", axisY->eMax);
     prefs.end();
 }
-
-static uint8_t GUIBrightnessToStep(uint8_t index) {
-    if (index > 9U) index = 9U;
-    return GUI_BRIGHTNESS_STEP_TABLE[index];
-}
-
-static void GUISceneEnter(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return;
-
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component != nullptr) {
-            component->Enter();
-        }
-    }
-}
-
-static void GUISceneLeave(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return;
-
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component != nullptr) {
-            component->Exit();
-        }
-    }
-}
-
-static void GUIEnsureMenuSceneSelection(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return;
-    if (GUIMenuItemComponent::FindActive(scene) != nullptr) return;
-
-    GUIMenuItemComponent* first = GUIMenuItemComponent::FindFirst(scene);
-    if (first != nullptr) {
-        first->SetActive(true);
-    }
-}
-
-} // namespace
-
-uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
-    if (outMax <= outMin) return outMin;
-    if (value > 4095U) value = 4095U;
-    return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
-}
-
-void GUISwitchScene(gui_scene_t* scene) {
-    if (s_guiActiveScene == scene) return;
-
-    if (s_guiActiveScene != nullptr) {
-        GUISceneLeave(s_guiActiveScene);
-    }
-
-    s_guiActiveScene = scene;
-    if (s_guiActiveScene != nullptr) {
-        GUISceneEnter(s_guiActiveScene);
-        GUIEnsureMenuSceneSelection(s_guiActiveScene);
-    }
-}
-
-gui_scene_t* GUIGetActiveScene(void) {
-    return s_guiActiveScene;
-}
-
-bool GUIServiceActiveScene(void) {
-    gui_scene_t* const scene = s_guiActiveScene;
-    if ((scene == nullptr) || (scene->components == nullptr)) return false;
-
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component == nullptr) continue;
-
-        component->Process();
-        if (s_guiActiveScene != scene) return false;
-    }
-
-    bool sent = false;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component == nullptr) continue;
-
-        if (!sent) {
-            sent = component->Send();
-        }
-        if (s_guiActiveScene != scene) return false;
-    }
-
-    return sent;
-}
-
-bool GUIBrightnessComponent::s_loaded = false;
-uint8_t GUIBrightnessComponent::s_storedIndex = 5U;
-
-// -----------------------------------------------------------------------------
-// Section: GUIComponent
-// -----------------------------------------------------------------------------
-
-// Base interface only.
-
-// -----------------------------------------------------------------------------
-// Section: GUIClsComponent
-// -----------------------------------------------------------------------------
-
-uint8_t GUIClsComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_CLS;
-}
-
-uint8_t GUIClsComponent::GetClassId(void) const {
-    return ClassId();
-}
-
-GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
-  : m_color(color),
-    m_highlight(highlight),
-    m_pendingClear(false),
-    m_nextKeepAliveMs(0U) {
-}
-
-bool GUIClsComponent::SendBacklightKeepOn(void) {
-    if (!m_highlight) return false;
-
-    const uint32_t now = millis();
-    if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
-
-    hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
-    m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
-    return true;
-}
-
-void GUIClsComponent::Enter(void) {
-    m_pendingClear = true;
-    m_nextKeepAliveMs = millis();
-}
-
-void GUIClsComponent::Process(void) {
-}
-
-bool GUIClsComponent::Send(void) {
-    if (m_pendingClear) {
-        if (!GUIIsLcdReady()) return false;
-
-        const hmi_cmd_result_t rc = hmi_cmd_lcd_clear(m_color);
-        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-            m_pendingClear = false;
-        }
-        return true;
-    }
-
-    return SendBacklightKeepOn();
-}
-
-void GUIClsComponent::Exit(void) {
-    m_pendingClear = false;
-}
-
-// -----------------------------------------------------------------------------
-// Section: GUIJViewComponent
-// -----------------------------------------------------------------------------
-
-uint8_t GUIJViewComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_J_VIEW;
 }
 
 uint8_t GUIJViewComponent::GetClassId(void) const {
-    return ClassId();
+    return (uint8_t)GUI_CLASS_J_VIEW;
 }
 
 GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode,
@@ -529,12 +425,8 @@ void GUIJViewComponent::Exit(void) {
 // Section: GUIHotKeyComponent
 // -----------------------------------------------------------------------------
 
-uint8_t GUIHotKeyComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_HOT_KEY;
-}
-
 uint8_t GUIHotKeyComponent::GetClassId(void) const {
-    return ClassId();
+    return (uint8_t)GUI_CLASS_HOT_KEY;
 }
 
 GUIHotKeyComponent::GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene)
@@ -562,12 +454,8 @@ void GUIHotKeyComponent::Exit(void) {
 // Section: GUILabelComponent
 // -----------------------------------------------------------------------------
 
-uint8_t GUILabelComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_LABEL;
-}
-
 uint8_t GUILabelComponent::GetClassId(void) const {
-    return ClassId();
+    return (uint8_t)GUI_CLASS_LABEL;
 }
 
 GUILabelComponent::GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text)
@@ -603,12 +491,8 @@ void GUILabelComponent::Exit(void) {
 // Section: GUIMenuItemComponent
 // -----------------------------------------------------------------------------
 
-uint8_t GUIMenuItemComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_MENU_ITEM;
-}
-
 uint8_t GUIMenuItemComponent::GetClassId(void) const {
-    return ClassId();
+    return (uint8_t)GUI_CLASS_MENU_ITEM;
 }
 
 GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene)
@@ -622,14 +506,14 @@ GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* tex
 }
 
 GUIMenuItemComponent* GUIMenuItemComponent::Cast(GUIComponent* component) {
-    if ((component != nullptr) && (component->GetClassId() == GUIMenuItemComponent::ClassId())) {
+    if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
         return static_cast<GUIMenuItemComponent*>(component);
     }
     return nullptr;
 }
 
 const GUIMenuItemComponent* GUIMenuItemComponent::Cast(const GUIComponent* component) {
-    if ((component != nullptr) && (component->GetClassId() == GUIMenuItemComponent::ClassId())) {
+    if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
         return static_cast<const GUIMenuItemComponent*>(component);
     }
     return nullptr;
@@ -637,7 +521,6 @@ const GUIMenuItemComponent* GUIMenuItemComponent::Cast(const GUIComponent* compo
 
 GUIMenuItemComponent* GUIMenuItemComponent::FindFirst(gui_scene_t* scene) {
     if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
-
     for (size_t i = 0U; i < scene->componentCount; ++i) {
         GUIMenuItemComponent* item = Cast(scene->components[i]);
         if (item != nullptr) return item;
@@ -647,7 +530,6 @@ GUIMenuItemComponent* GUIMenuItemComponent::FindFirst(gui_scene_t* scene) {
 
 GUIMenuItemComponent* GUIMenuItemComponent::FindActive(gui_scene_t* scene) {
     if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
-
     for (size_t i = 0U; i < scene->componentCount; ++i) {
         GUIMenuItemComponent* item = Cast(scene->components[i]);
         if ((item != nullptr) && item->m_active) return item;
@@ -671,11 +553,8 @@ GUIMenuItemComponent* GUIMenuItemComponent::FindAdjacent(gui_scene_t* scene, con
     int index = startIndex;
     for (int n = 0; n < count; ++n) {
         index += step;
-        if (index < 0) {
-            index = count - 1;
-        } else if (index >= count) {
-            index = 0;
-        }
+        if (index < 0) index = count - 1;
+        else if (index >= count) index = 0;
 
         GUIMenuItemComponent* item = Cast(scene->components[index]);
         if (item != nullptr) return item;
@@ -746,14 +625,15 @@ bool GUIMenuItemComponent::Draw(bool active) {
 }
 
 void GUIMenuItemComponent::Enter(void) {
+    if (GUIMenuItemComponent::FindActive(s_guiActiveScene) == nullptr) {
+        m_active = true;
+    }
     m_prevActive = m_active;
     m_pending = true;
 }
 
 void GUIMenuItemComponent::Process(void) {
-    if (m_active != m_prevActive) {
-        m_pending = true;
-    }
+    if (m_active != m_prevActive) m_pending = true;
     (void)ProcessNavigation();
     SyncPrevActive();
 }
@@ -772,12 +652,22 @@ void GUIMenuItemComponent::Exit(void) {
 // Section: GUIBrightnessComponent
 // -----------------------------------------------------------------------------
 
-uint8_t GUIBrightnessComponent::ClassId(void) {
-    return (uint8_t)GUI_CLASS_BRIGHTNESS;
+namespace {
+static constexpr uint8_t GUI_BRIGHTNESS_STEP_TABLE[10] = {
+    1U, 2U, 3U, 5U, 8U, 13U, 22U, 36U, 61U, 127U
+};
+
+static uint8_t GUIBrightnessToStep(uint8_t index) {
+    if (index > 9U) index = 9U;
+    return GUI_BRIGHTNESS_STEP_TABLE[index];
+}
 }
 
+bool GUIBrightnessComponent::s_loaded = false;
+uint8_t GUIBrightnessComponent::s_storedIndex = 5U;
+
 uint8_t GUIBrightnessComponent::GetClassId(void) const {
-    return ClassId();
+    return (uint8_t)GUI_CLASS_BRIGHTNESS;
 }
 
 GUIBrightnessComponent::GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t y)
@@ -801,14 +691,11 @@ void GUIBrightnessComponent::EnsureLoaded(void) {
     } else {
         s_storedIndex = 5U;
     }
-
     s_loaded = true;
 }
 
 bool GUIBrightnessComponent::SaveStoredIndex(uint8_t index) {
-    if (index > 9U) {
-        index = 9U;
-    }
+    if (index > 9U) index = 9U;
 
     Preferences prefs;
     if (!prefs.begin("gui", false)) return false;
@@ -835,7 +722,7 @@ bool GUIBrightnessComponent::DrawValue(void) {
     (void)snprintf(text, sizeof(text), "%u", (unsigned)m_actualIndex);
     text[sizeof(text) - 1U] = '\0';
 
-    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, GUI_COLOR_CYAN, text);
+    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, GUI_COLOR_ORANGE, text);
     if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
         m_pendingDraw = false;
     }
@@ -885,4 +772,62 @@ void GUIBrightnessComponent::Exit(void) {
     }
     m_pendingSend = false;
     m_pendingDraw = false;
+}
+
+// -----------------------------------------------------------------------------
+// Section: Common
+// -----------------------------------------------------------------------------
+
+uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
+    if (outMax <= outMin) return outMin;
+    if (value > 4095U) value = 4095U;
+    return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
+}
+
+static void GUISceneEnter(gui_scene_t* scene) {
+    if ((scene == nullptr) || (scene->components == nullptr)) return;
+    for (size_t i = 0U; i < scene->componentCount; ++i) {
+        GUIComponent* component = scene->components[i];
+        if (component != nullptr) component->Enter();
+    }
+}
+
+static void GUISceneLeave(gui_scene_t* scene) {
+    if ((scene == nullptr) || (scene->components == nullptr)) return;
+    for (size_t i = 0U; i < scene->componentCount; ++i) {
+        GUIComponent* component = scene->components[i];
+        if (component != nullptr) component->Exit();
+    }
+}
+
+void GUISwitchScene(gui_scene_t* scene) {
+    if (s_guiActiveScene == scene) return;
+    GUISceneLeave(s_guiActiveScene);
+    s_guiActiveScene = scene;
+    GUISceneEnter(s_guiActiveScene);
+}
+
+gui_scene_t* GUIGetActiveScene(void) {
+    return s_guiActiveScene;
+}
+
+bool GUIServiceActiveScene(void) {
+    gui_scene_t* const scene = s_guiActiveScene;
+    if ((scene == nullptr) || (scene->components == nullptr)) return false;
+
+    for (size_t i = 0U; i < scene->componentCount; ++i) {
+        GUIComponent* component = scene->components[i];
+        if (component == nullptr) continue;
+        component->Process();
+        if (s_guiActiveScene != scene) return false;
+    }
+
+    bool sent = false;
+    for (size_t i = 0U; i < scene->componentCount; ++i) {
+        GUIComponent* component = scene->components[i];
+        if (component == nullptr) continue;
+        if (!sent) sent = component->Send();
+        if (s_guiActiveScene != scene) return false;
+    }
+    return sent;
 }

@@ -5,6 +5,16 @@
 #include <stdint.h>
 
 #include "hmi.h"
+// -----------------------------------------------------------------------------
+// Section: Common
+// -----------------------------------------------------------------------------
+static constexpr uint16_t GUI_COLOR_BLACK   = 0x0000U;
+static constexpr uint16_t GUI_COLOR_WHITE   = 0xFFFFU;
+static constexpr uint16_t GUI_COLOR_CYAN    = 0x07FFU;
+static constexpr uint16_t GUI_COLOR_GREEN   = 0x07E0U;
+static constexpr uint16_t GUI_COLOR_ORANGE  = 0xFD20U;
+static constexpr uint16_t GUI_COLOR_MAGENTA = 0xF81FU;
+static constexpr uint16_t GUI_COLOR_GRAY    = 0x7BEFU;
 
 class GUIComponent;
 class GUIClsComponent;
@@ -21,32 +31,9 @@ typedef struct {
 
 #define GUI_SCENE(_items) { (_items), sizeof(_items) / sizeof((_items)[0]) }
 
-static constexpr uint16_t GUI_COLOR_BLACK   = 0x0000U;
-static constexpr uint16_t GUI_COLOR_WHITE   = 0xFFFFU;
-static constexpr uint16_t GUI_COLOR_CYAN    = 0x07FFU;
-static constexpr uint16_t GUI_COLOR_GREEN   = 0x07E0U;
-static constexpr uint16_t GUI_COLOR_ORANGE  = 0xFD20U;
-static constexpr uint16_t GUI_COLOR_MAGENTA = 0xF81FU;
-static constexpr uint16_t GUI_COLOR_GRAY    = 0x7BEFU;
-
-typedef struct {
-    uint16_t eMin;
-    uint16_t cMin;
-    uint16_t cMax;
-    uint16_t eMax;
-} gui_axis_cal_t;
-
-enum gui_j_view_mode_t {
-    GUI_J_VIEW_MODE_TRACK = 1,
-    GUI_J_VIEW_MODE_CAL_CENTER = 2,
-    GUI_J_VIEW_MODE_CAL_EDGE = 3
-};
-
-enum gui_j_view_phase_t {
-    GUI_J_VIEW_PHASE_IDLE = 0,
-    GUI_J_VIEW_PHASE_ERASE,
-    GUI_J_VIEW_PHASE_DRAW
-};
+void GUISwitchScene(gui_scene_t* scene);
+gui_scene_t* GUIGetActiveScene(void);
+bool GUIServiceActiveScene(void);
 
 // -----------------------------------------------------------------------------
 // Section: GUIComponent
@@ -71,7 +58,6 @@ class GUIClsComponent : public GUIComponent {
 public:
     GUIClsComponent(uint16_t color, bool highlight);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -90,6 +76,26 @@ private:
 // -----------------------------------------------------------------------------
 // Section: GUIJViewComponent
 // -----------------------------------------------------------------------------
+typedef struct {
+    uint16_t eMin;
+    uint16_t cMin;
+    uint16_t cMax;
+    uint16_t eMax;
+} gui_axis_cal_t;
+
+enum gui_j_view_mode_t {
+    GUI_J_VIEW_MODE_TRACK = 1,
+    GUI_J_VIEW_MODE_CAL_CENTER = 2,
+    GUI_J_VIEW_MODE_CAL_EDGE = 3
+};
+
+enum gui_j_view_phase_t {
+    GUI_J_VIEW_PHASE_IDLE = 0,
+    GUI_J_VIEW_PHASE_ERASE,
+    GUI_J_VIEW_PHASE_DRAW
+};
+
+uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);
 
 class GUIJViewComponent : public GUIComponent {
 public:
@@ -98,7 +104,6 @@ public:
                       gui_axis_cal_t* axisY,
                       gui_scene_t* targetScene);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -146,7 +151,6 @@ class GUIHotKeyComponent : public GUIComponent {
 public:
     GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -166,7 +170,6 @@ class GUILabelComponent : public GUIComponent {
 public:
     GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -189,7 +192,6 @@ class GUIMenuItemComponent : public GUIComponent {
 public:
     GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -226,7 +228,6 @@ class GUIBrightnessComponent : public GUIComponent {
 public:
     GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t y);
 
-    static uint8_t ClassId(void);
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
@@ -251,14 +252,5 @@ private:
     static bool s_loaded;
     static uint8_t s_storedIndex;
 };
-
-// -----------------------------------------------------------------------------
-// Section: Common
-// -----------------------------------------------------------------------------
-
-uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);
-void GUISwitchScene(gui_scene_t* scene);
-gui_scene_t* GUIGetActiveScene(void);
-bool GUIServiceActiveScene(void);
 
 #endif // GUI_H
