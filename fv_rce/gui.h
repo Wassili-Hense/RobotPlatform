@@ -3,15 +3,16 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include "hmi.h"
 
 class GUIComponent;
-typedef const void* gui_class_id_t;
-
-template<typename T>
-inline gui_class_id_t GUIClassIdOf(void) {
-    return reinterpret_cast<gui_class_id_t>(&GUIClassIdOf<T>);
-}
+class GUIClsComponent;
+class GUIJViewComponent;
+class GUIHotKeyComponent;
+class GUILabelComponent;
+class GUIMenuItemComponent;
+class GUIBrightnessComponent;
 
 typedef struct {
     GUIComponent** components;
@@ -41,58 +42,69 @@ enum gui_j_view_mode_t {
     GUI_J_VIEW_MODE_CAL_EDGE = 3
 };
 
-class GUIComponent {
-public:
-    virtual ~GUIComponent() = default;
-    virtual gui_class_id_t GetClassId(void) const = 0;  // TODO: Use enum. return type uint8.
-    virtual bool Enter(void) = 0;  // TODO: bool -> void
-    virtual bool Process(void) = 0;  // TODO: bool -> void
-    virtual bool ProcessAndSend(void) = 0;  // TODO: rename Send, call {Process(); if(sent) sent = Send();}
-    virtual bool Exit(void) = 0;  // TODO: bool -> void
-};
-
-template<typename T>
-class GUIComponentTyped : public GUIComponent {  // TODO: remove
-public:
-    static gui_class_id_t ClassId(void) {
-        return GUIClassIdOf<T>();
-    }
-    gui_class_id_t GetClassId(void) const override {
-        return ClassId();
-    }
-};
-
-class GUIClsComponent : public GUIComponentTyped<GUIClsComponent> {
-public:
-    GUIClsComponent(uint16_t color, bool highlight);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
-private:
-    bool SendBacklightKeepOn(void);
-    uint16_t m_color;
-    bool m_highlight;
-    bool m_pendingClear;
-    uint32_t m_nextKeepAliveMs;
-};
-
 enum gui_j_view_phase_t {
     GUI_J_VIEW_PHASE_IDLE = 0,
     GUI_J_VIEW_PHASE_ERASE,
     GUI_J_VIEW_PHASE_DRAW
 };
 
-class GUIJViewComponent : public GUIComponentTyped<GUIJViewComponent> {
+// -----------------------------------------------------------------------------
+// Section: GUIComponent
+// -----------------------------------------------------------------------------
+
+class GUIComponent {
+public:
+    virtual ~GUIComponent() = default;
+
+    virtual uint8_t GetClassId(void) const = 0;
+    virtual void Enter(void) = 0;
+    virtual void Process(void) = 0;
+    virtual bool Send(void) = 0;
+    virtual void Exit(void) = 0;
+};
+
+// -----------------------------------------------------------------------------
+// Section: GUIClsComponent
+// -----------------------------------------------------------------------------
+
+class GUIClsComponent : public GUIComponent {
+public:
+    GUIClsComponent(uint16_t color, bool highlight);
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+
+private:
+    bool SendBacklightKeepOn(void);
+
+    uint16_t m_color;
+    bool m_highlight;
+    bool m_pendingClear;
+    uint32_t m_nextKeepAliveMs;
+};
+
+// -----------------------------------------------------------------------------
+// Section: GUIJViewComponent
+// -----------------------------------------------------------------------------
+
+class GUIJViewComponent : public GUIComponent {
 public:
     GUIJViewComponent(gui_j_view_mode_t mode,
                       gui_axis_cal_t* axisX,
                       gui_axis_cal_t* axisY,
                       gui_scene_t* targetScene);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+
 private:
     bool Update(void);
     bool HandleButtons(void);
@@ -100,6 +112,7 @@ private:
     void UpdateWindow(void);
     uint8_t MapAxisX(uint16_t value) const;
     uint8_t MapAxisY(uint16_t value) const;
+
     gui_j_view_mode_t m_mode;
     gui_axis_cal_t* m_axisX;
     gui_axis_cal_t* m_axisY;
@@ -125,25 +138,41 @@ private:
     gui_j_view_phase_t m_phase;
 };
 
-class GUIHotKeyComponent : public GUIComponentTyped<GUIHotKeyComponent> {
+// -----------------------------------------------------------------------------
+// Section: GUIHotKeyComponent
+// -----------------------------------------------------------------------------
+
+class GUIHotKeyComponent : public GUIComponent {
 public:
     GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+
 private:
     hmi_data_idx_t m_idx;
     gui_scene_t* m_targetScene;
 };
 
-class GUILabelComponent : public GUIComponentTyped<GUILabelComponent> {
+// -----------------------------------------------------------------------------
+// Section: GUILabelComponent
+// -----------------------------------------------------------------------------
+
+class GUILabelComponent : public GUIComponent {
 public:
     GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+
 private:
     uint8_t m_x;
     uint8_t m_y;
@@ -152,24 +181,34 @@ private:
     bool m_pending;
 };
 
-class GUIMenuItemComponent : public GUIComponentTyped<GUIMenuItemComponent> {
+// -----------------------------------------------------------------------------
+// Section: GUIMenuItemComponent
+// -----------------------------------------------------------------------------
+
+class GUIMenuItemComponent : public GUIComponent {
 public:
     GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
-    static void EnsureSceneSelection(gui_scene_t* scene);
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+
+    void SetActive(bool active);
+    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);
+    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);
+
 private:
     bool Draw(bool active);
     bool ProcessNavigation(void);
-    void SetActive(bool active);
     void SyncPrevActive(void);
+
     static GUIMenuItemComponent* Cast(GUIComponent* component);
     static const GUIMenuItemComponent* Cast(const GUIComponent* component);
-    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);
-    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);
     static GUIMenuItemComponent* FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step);
+
     uint8_t m_x;
     uint8_t m_y;
     const char* m_text;
@@ -179,18 +218,24 @@ private:
     bool m_pending;
 };
 
+// -----------------------------------------------------------------------------
+// Section: GUIBrightnessComponent
+// -----------------------------------------------------------------------------
 
-class GUIBrightnessComponent : public GUIComponentTyped<GUIBrightnessComponent> {
+class GUIBrightnessComponent : public GUIComponent {
 public:
     GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t y);
-    bool Enter(void) override;
-    bool Process(void) override;
-    bool ProcessAndSend(void) override;
-    bool Exit(void) override;
+
+    static uint8_t ClassId(void);
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
 
 private:
     static void EnsureLoaded(void);
-    static bool SaveStoredIndex(void);
+    static bool SaveStoredIndex(uint8_t index);
 
     bool ProcessInput(void);
     bool SendBrightness(void);
@@ -199,13 +244,17 @@ private:
     uint8_t m_mode;
     uint8_t m_x;
     uint8_t m_y;
+    uint8_t m_actualIndex;
     bool m_pendingSend;
     bool m_pendingDraw;
 
     static bool s_loaded;
     static uint8_t s_storedIndex;
-    static uint8_t s_actualIndex;  // TDOD: remove static
 };
+
+// -----------------------------------------------------------------------------
+// Section: Common
+// -----------------------------------------------------------------------------
 
 uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax);
 void GUISwitchScene(gui_scene_t* scene);

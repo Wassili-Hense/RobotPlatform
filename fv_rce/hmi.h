@@ -1,8 +1,8 @@
 #ifndef HMI_H
 #define HMI_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,8 +12,10 @@ typedef enum {
     HMI_DATA_STAT_LCD_BUSY = 0,
     HMI_DATA_STAT_USB_CONN = 1,
     HMI_DATA_STAT_BL_ON    = 2,
+
     HMI_DATA_JOY_X         = 10,
     HMI_DATA_JOY_Y         = 11,
+
     HMI_DATA_BTN_ON        = 20,
     HMI_DATA_BTN_FIRE      = 21,
     HMI_DATA_BTN_UP        = 22,
@@ -24,7 +26,9 @@ typedef enum {
     HMI_DATA_BTN_LDN       = 27,
     HMI_DATA_BTN_RUP       = 28,
     HMI_DATA_BTN_RDN       = 29,
-    HMI_DATA_COUNT         = 30
+    HMI_DATA_BTN_ANYKEY    = 30,
+
+    HMI_DATA_COUNT         = 31
 } hmi_data_idx_t;
 
 typedef enum {
@@ -36,8 +40,8 @@ typedef enum {
 
 typedef enum {
     HMI_CMD_OK                  = 0,
-    HMI_CMD_ERR_NOT_INITIALIZED = 1,  // TODO: log_callback(, emergency = false)
-    HMI_CMD_ERR_INVALID_ARG     = 2,  // TODO: log_callback(, emergency = false)  
+    HMI_CMD_ERR_NOT_INITIALIZED = 1,
+    HMI_CMD_ERR_INVALID_ARG     = 2,
     HMI_CMD_ERR_NOT_READY       = 3,
     HMI_CMD_ERR_I2C_TX          = 4
 } hmi_cmd_result_t;
@@ -53,10 +57,12 @@ void hmi_sysSend(void);
 void hmi_cmd_set_backlight_timeout(uint32_t timeout_ms);
 void hmi_cmd_set_brightness(uint8_t level);
 void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms);
+
 hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color);
 hmi_cmd_result_t hmi_cmd_lcd_set_bg(uint16_t rgb565_color);
 hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_color, const char *text);
 hmi_cmd_result_t hmi_cmd_lcd_draw_marker(uint8_t x, uint8_t y, uint8_t index, uint16_t rgb565_color);
+
 void hmi_cmd_lcd_set_indicator(uint8_t index, bool state);
 void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value);
 

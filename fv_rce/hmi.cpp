@@ -1,4 +1,5 @@
 #include "hmi.h"
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <stdarg.h>
@@ -79,7 +80,7 @@ static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
 
 #ifdef DEBUG_HMI
 static void LogMessage(bool emergency, const char* fmt, ...) {
-  if (s_logCallback == nullptr || fmt == nullptr) {
+  if ((s_logCallback == nullptr) || (fmt == nullptr)) {
     return;
   }
 
@@ -92,10 +93,10 @@ static void LogMessage(bool emergency, const char* fmt, ...) {
 }
 
 static void LogError(const char* funcName, const char* errName) {
-  if (funcName == nullptr || errName == nullptr) {
+  if ((funcName == nullptr) || (errName == nullptr)) {
     return;
   }
-  LogMessage(true, "%s - %s", funcName, errName);
+  LogMessage(false, "%s - %s", funcName, errName);
 }
 
 static const char* ButtonNameFromIndex(uint8_t idx) {
@@ -128,7 +129,7 @@ static void LogStateIfChanged(void) {
   }
 
   LogMessage(false,
-             "status=%1X X=%5u Y=%5u button=%s",
+             "%1X %5u %5u %s",
              (unsigned int)(s_dataBits & 0x0FU),
              (unsigned int)s_joyX,
              (unsigned int)s_joyY,
@@ -136,7 +137,7 @@ static void LogStateIfChanged(void) {
 }
 
 static void LogTxBytes(const uint8_t* data, uint8_t len) {
-  if (data == nullptr || len == 0U) {
+  if ((data == nullptr) || (len == 0U)) {
     return;
   }
 
@@ -158,7 +159,7 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
     LogError(funcName, "NOT_INITIALIZED");
     return HMI_CMD_ERR_NOT_INITIALIZED;
   }
-  if (data == nullptr || len == 0U || len > 32U) {
+  if ((data == nullptr) || (len == 0U) || (len > 32U)) {
     LogError(funcName, "INVALID_ARG");
     return HMI_CMD_ERR_INVALID_ARG;
   }
@@ -170,7 +171,7 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
   Wire.beginTransmission(I2C_ADDR);
   const size_t written = Wire.write(data, len);
   const uint8_t rc = Wire.endTransmission(true);
-  if (rc != 0U || written != len) {
+  if ((rc != 0U) || (written != len)) {
     LogError(funcName, "I2C_TX");
     return HMI_CMD_ERR_I2C_TX;
   }
@@ -178,12 +179,15 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
   if (isLcd) {
     s_lcdSendAllowed = false;
   }
+
   LogTxBytes(data, len);
   return HMI_CMD_OK;
 }
-static uint16_t abs2(uint16_t a, uint16_t b){
-  return (a>b)?(a-b):(b-a);
+
+static uint16_t abs2(uint16_t a, uint16_t b) {
+  return (a > b) ? (a - b) : (b - a);
 }
+
 static void ParsePacket(const uint8_t* rx) {
   const uint16_t word0 = (uint16_t)((uint16_t)rx[0] | ((uint16_t)rx[1] << 8));
   const uint16_t joyX = (uint16_t)(((uint16_t)(rx[3] & 0x0FU) << 8) | (uint16_t)rx[2]);
@@ -197,6 +201,7 @@ static void ParsePacket(const uint8_t* rx) {
   const uint32_t newButtons = (uint32_t)(word0 & 0x03FFU);
   newBits &= ~(0x03FFUL << (uint8_t)HMI_DATA_BTN_ON);
   newBits |= (newButtons << (uint8_t)HMI_DATA_BTN_ON);
+  newBits = set_bit(newBits, HMI_DATA_BTN_ANYKEY, (newButtons != 0U) ? 1U : 0U);
 
   s_lcdSendAllowed = ((word0 & (1U << STATUS_BIT_LCD_BUSY)) == 0U);
   s_changed = (s_dataBits ^ newBits);
@@ -209,7 +214,6 @@ static void ParsePacket(const uint8_t* rx) {
     s_joyY = joyY;
     s_changed |= (1UL << HMI_DATA_JOY_Y);
   }
-
   s_dataBits = newBits;
 }
 
@@ -295,6 +299,7 @@ hmi_tick_result_t hmi_tick(void) {
     LogError("hmi_tick", "I2C_REQUEST");
     result = (hmi_tick_result_t)(result | HMI_TICK_ERR_I2C_REQUEST);
   }
+
   while (Wire.available() && (len < I2C_READ_LEN)) {
     rx[len++] = (uint8_t)Wire.read();
   }
@@ -303,6 +308,7 @@ hmi_tick_result_t hmi_tick(void) {
     LogError("hmi_tick", "I2C_READ");
     result = (hmi_tick_result_t)(result | HMI_TICK_ERR_I2C_READ);
   }
+
   if (result != HMI_TICK_OK) {
     return result;
   }
@@ -342,13 +348,11 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
-
     case HMI_SYS_CMD_BRIGHTNESS: {
       const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, s_sysBrightness.level };
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
-
     case HMI_SYS_CMD_BL_TIMEOUT: {
       uint8_t data[5] = {
         CMD_BACKLIGHT_TIMEOUT,
@@ -360,7 +364,6 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
-
     case HMI_SYS_CMD_INDICATOR0:
     case HMI_SYS_CMD_INDICATOR1: {
       const uint8_t index = (type == HMI_SYS_CMD_INDICATOR0) ? 0U : 1U;
@@ -368,7 +371,6 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), true);
       break;
     }
-
     case HMI_SYS_CMD_PROGRESS0:
     case HMI_SYS_CMD_PROGRESS1:
     case HMI_SYS_CMD_PROGRESS2: {
@@ -377,7 +379,6 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), true);
       break;
     }
-
     default:
       return;
   }
@@ -392,7 +393,6 @@ void hmi_cmd_set_backlight_timeout(uint32_t timeout_ms) {
     LogError("hmi_cmd_set_backlight_timeout", "NOT_INITIALIZED");
     return;
   }
-
   s_sysBlTimeout.timeoutMs = timeout_ms;
   s_sysBlTimeout.hasData = true;
 }
@@ -402,7 +402,6 @@ void hmi_cmd_set_brightness(uint8_t level) {
     LogError("hmi_cmd_set_brightness", "NOT_INITIALIZED");
     return;
   }
-
   s_sysBrightness.level = level;
   s_sysBrightness.hasData = true;
 }
@@ -412,7 +411,6 @@ void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms) {
     LogError("hmi_cmd_play_tone", "NOT_INITIALIZED");
     return;
   }
-
   s_sysBeep.divider = divider;
   s_sysBeep.delayMs = delay_ms;
   s_sysBeep.hasData = true;
@@ -441,7 +439,7 @@ hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_col
   }
 
   const size_t textLen = strlen(text);
-  if ((textLen > 26U)) {
+  if (textLen > 26U) {
     LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
     return HMI_CMD_ERR_INVALID_ARG;
   }
@@ -477,7 +475,6 @@ void hmi_cmd_lcd_set_indicator(uint8_t index, bool state) {
     LogError("hmi_cmd_lcd_set_indicator", "NOT_INITIALIZED");
     return;
   }
-
   s_sysIndicator[index].value = state ? 1U : 0U;
   s_sysIndicator[index].hasData = true;
 }
@@ -491,7 +488,6 @@ void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value) {
     LogError("hmi_cmd_lcd_set_progress", "NOT_INITIALIZED");
     return;
   }
-
   s_sysProgress[index].value = value;
   s_sysProgress[index].hasData = true;
 }
