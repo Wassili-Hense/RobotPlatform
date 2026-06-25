@@ -215,6 +215,7 @@ static void AppTask(void* arg) {
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
+  GUISetHomeScene(&s_sceneHome);
   GUISwitchScene(&s_sceneHome);
   (void)xTaskCreatePinnedToCore(AppTask, "AppTask", 4096U, nullptr, 2, &s_appTaskHandle, 1);
 }

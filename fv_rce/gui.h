@@ -32,6 +32,7 @@ typedef struct {
 #define GUI_SCENE(_items) { (_items), sizeof(_items) / sizeof((_items)[0]) }
 
 void GUISwitchScene(gui_scene_t* scene);
+void GUISetHomeScene(gui_scene_t* scene);
 gui_scene_t* GUIGetActiveScene(void);
 bool GUIServiceActiveScene(void);
 
@@ -156,6 +157,7 @@ public:
 
 private:
     hmi_data_idx_t m_idx;
+    gui_scene_t* m_targetScene;
 };
 
 // -----------------------------------------------------------------------------
@@ -205,6 +207,7 @@ private:
     uint8_t m_x;
     uint8_t m_y;
     const char* m_text;
+    gui_scene_t* m_targetScene;
     bool m_active;
     bool m_prevActive;
     bool m_pending;

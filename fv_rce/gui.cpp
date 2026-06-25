@@ -15,6 +15,9 @@ enum gui_class_id_t : uint8_t {
 };
 
 static gui_scene_t* s_guiActiveScene = nullptr;
+static gui_scene_t* s_guiHomeScene = nullptr;
+static uint32_t s_guiLastActivityMs = 0U;
+static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 60000U;
 }
 
 // -----------------------------------------------------------------------------
@@ -721,6 +724,19 @@ void GUIBrightnessComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 // Section: Common
 // -----------------------------------------------------------------------------
+
+static bool GUIHandleIdleHomeTimeout(void) {
+    if (hmi_get(HMI_DATA_BTN_ANYKEY) != 0U) {
+        s_guiLastActivityMs = millis();
+        return false;
+    }
+    if ((s_guiHomeScene == nullptr) || (s_guiActiveScene == nullptr) || (s_guiActiveScene == s_guiHomeScene)) return false;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - s_guiLastActivityMs) < GUI_IDLE_HOME_TIMEOUT_MS) return false;
+    GUISwitchScene(s_guiHomeScene);
+    return true;
+}
+
 static void GUISceneEnter(gui_scene_t* scene) {
     if ((scene == nullptr) || (scene->components == nullptr)) return;
     for (size_t i = 0U; i < scene->componentCount; ++i) {
@@ -744,6 +760,11 @@ void GUISwitchScene(gui_scene_t* scene) {
     GUISceneEnter(s_guiActiveScene);
 }
 
+void GUISetHomeScene(gui_scene_t* scene) {
+    s_guiHomeScene = scene;
+    s_guiLastActivityMs = millis();
+}
+
 gui_scene_t* GUIGetActiveScene(void) {
     return s_guiActiveScene;
 }
@@ -751,6 +772,7 @@ gui_scene_t* GUIGetActiveScene(void) {
 bool GUIServiceActiveScene(void) {
     gui_scene_t* const scene = s_guiActiveScene;
     if ((scene == nullptr) || (scene->components == nullptr)) return false;
+    if (GUIHandleIdleHomeTimeout()) return false;
 
     for (size_t i = 0U; i < scene->componentCount; ++i) {
         GUIComponent* component = scene->components[i];
