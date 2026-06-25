@@ -91,7 +91,7 @@ static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
 
 static uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
     if (outMax <= outMin) return outMin;
-    if (value > 4095U) value = 4095U;
+    if (value > 4095U) return outMax;
     return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
 }
 
@@ -135,11 +135,10 @@ uint8_t GUIJViewComponent::GetClassId(void) const {
     return (uint8_t)GUI_CLASS_J_VIEW;
 }
 
-GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axisX, gui_axis_cal_t* axisY, gui_scene_t* targetScene)
+GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axisX, gui_axis_cal_t* axisY)
   : m_mode(mode),
     m_axisX(axisX),
     m_axisY(axisY),
-    m_targetScene(targetScene),
     m_currentX(0U),
     m_currentY(0U),
     m_nextX(0U),
@@ -240,20 +239,10 @@ bool GUIJViewComponent::SaveCalibration(void) {
 }
 
 bool GUIJViewComponent::HandleButtons(void) {
-    if (hmi_changed(HMI_DATA_BTN_BACK) && (hmi_get(HMI_DATA_BTN_BACK) != 0U) && (m_targetScene != nullptr)) {
-        GUISwitchScene(m_targetScene);
-        return true;
+    if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !hmi_changed(HMI_DATA_BTN_OK) || (hmi_get(HMI_DATA_BTN_OK) == 0U)) {
+        return false;
     }
-
-    if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
-        if (m_mode != GUI_J_VIEW_MODE_TRACK) {
-          (void)SaveCalibration();
-        }
-        GUISwitchScene(m_targetScene);
-        return true;
-    }
-
-    return false;
+    return SaveCalibration();
 }
 
 bool GUIJViewComponent::Update(void) {
@@ -333,7 +322,6 @@ void GUIJViewComponent::Enter(void) {
         GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
         m_trackCalLoaded = true;
     }
-    //UpdateWindow();
     m_phase = GUI_J_VIEW_PHASE_IDLE;
 }
 
@@ -474,39 +462,26 @@ GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* tex
     m_pending(false) {
 }
 
-GUIMenuItemComponent* GUIMenuItemComponent::Cast(GUIComponent* component) {
+namespace {
+static GUIMenuItemComponent* GUIMenuItemCast(GUIComponent* component) {
     if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
         return static_cast<GUIMenuItemComponent*>(component);
     }
     return nullptr;
 }
 
-const GUIMenuItemComponent* GUIMenuItemComponent::Cast(const GUIComponent* component) {
-    if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
-        return static_cast<const GUIMenuItemComponent*>(component);
-    }
-    return nullptr;
-}
-
-GUIMenuItemComponent* GUIMenuItemComponent::FindFirst(gui_scene_t* scene) {
+static GUIMenuItemComponent* GUIMenuFindFirst(void) {
+    gui_scene_t* const scene = s_guiActiveScene;
     if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
     for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIMenuItemComponent* item = Cast(scene->components[i]);
+        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
         if (item != nullptr) return item;
     }
     return nullptr;
 }
 
-GUIMenuItemComponent* GUIMenuItemComponent::FindActive(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIMenuItemComponent* item = Cast(scene->components[i]);
-        if ((item != nullptr) && item->m_active) return item;
-    }
-    return nullptr;
-}
-
-GUIMenuItemComponent* GUIMenuItemComponent::FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step) {
+static GUIMenuItemComponent* GUIMenuFindAdjacent(const GUIMenuItemComponent* from, int step) {
+    gui_scene_t* const scene = s_guiActiveScene;
     if ((scene == nullptr) || (scene->components == nullptr) || (from == nullptr) || (step == 0)) return nullptr;
 
     int startIndex = -1;
@@ -525,8 +500,19 @@ GUIMenuItemComponent* GUIMenuItemComponent::FindAdjacent(gui_scene_t* scene, con
         if (index < 0) index = count - 1;
         else if (index >= count) index = 0;
 
-        GUIMenuItemComponent* item = Cast(scene->components[index]);
+        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[index]);
         if (item != nullptr) return item;
+    }
+    return nullptr;
+}
+}
+
+GUIMenuItemComponent* GUIMenuFindActive(void) {
+    gui_scene_t* const scene = s_guiActiveScene;
+    if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
+    for (size_t i = 0U; i < scene->componentCount; ++i) {
+        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
+        if ((item != nullptr) && item->m_active) return item;
     }
     return nullptr;
 }
@@ -538,10 +524,6 @@ void GUIMenuItemComponent::SetActive(bool active) {
     }
 }
 
-void GUIMenuItemComponent::SyncPrevActive(void) {
-    m_prevActive = m_active;
-}
-
 bool GUIMenuItemComponent::ProcessNavigation(void) {
     if (!m_prevActive) return false;
 
@@ -549,7 +531,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
     if (scene == nullptr) return false;
 
     if (hmi_changed(HMI_DATA_BTN_UP) && (hmi_get(HMI_DATA_BTN_UP) != 0U)) {
-        GUIMenuItemComponent* next = FindAdjacent(scene, this, -1);
+        GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
         if ((next != nullptr) && (next != this)) {
             SetActive(false);
             next->SetActive(true);
@@ -558,7 +540,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
     }
 
     if (hmi_changed(HMI_DATA_BTN_DOWN) && (hmi_get(HMI_DATA_BTN_DOWN) != 0U)) {
-        GUIMenuItemComponent* next = FindAdjacent(scene, this, 1);
+        GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, 1);
         if ((next != nullptr) && (next != this)) {
             SetActive(false);
             next->SetActive(true);
@@ -594,7 +576,7 @@ bool GUIMenuItemComponent::Draw(bool active) {
 }
 
 void GUIMenuItemComponent::Enter(void) {
-    if (GUIMenuItemComponent::FindActive(s_guiActiveScene) == nullptr) {
+    if ((GUIMenuFindActive() == nullptr) && (GUIMenuFindFirst() == this)) {
         m_active = true;
     }
     m_prevActive = m_active;
@@ -604,7 +586,7 @@ void GUIMenuItemComponent::Enter(void) {
 void GUIMenuItemComponent::Process(void) {
     if (m_active != m_prevActive) m_pending = true;
     (void)ProcessNavigation();
-    SyncPrevActive();
+    m_prevActive = m_active;
 }
 
 bool GUIMenuItemComponent::Send(void) {
@@ -630,6 +612,14 @@ static uint8_t GUIBrightnessToStep(uint8_t index) {
     if (index > 9U) index = 9U;
     return GUI_BRIGHTNESS_STEP_TABLE[index];
 }
+
+static void GUIBrightnessApply(uint8_t mode, uint8_t index) {
+    uint8_t step = GUIBrightnessToStep(index);
+    if (mode == 0U) {
+        step = (uint8_t)((step + 1U) / 2U);
+    }
+    hmi_cmd_set_brightness(step);
+}
 }
 
 bool GUIBrightnessComponent::s_loaded = false;
@@ -644,7 +634,6 @@ GUIBrightnessComponent::GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t 
     m_x(x),
     m_y(y),
     m_actualIndex(5U),
-    m_pendingSend(false),
     m_pendingDraw(false) {
 }
 
@@ -674,17 +663,6 @@ bool GUIBrightnessComponent::SaveStoredIndex(uint8_t index) {
     return true;
 }
 
-bool GUIBrightnessComponent::SendBrightness(void) {
-    uint8_t step = GUIBrightnessToStep(m_actualIndex);
-    if (m_mode == 0U) {
-        step = (uint8_t)((step + 1U) / 2U);
-    }
-
-    hmi_cmd_set_brightness(step);
-    m_pendingSend = false;
-    return true;
-}
-
 bool GUIBrightnessComponent::DrawValue(void) {
     char text[4];
     (void)snprintf(text, sizeof(text), "%u", (unsigned)m_actualIndex);
@@ -711,7 +689,7 @@ bool GUIBrightnessComponent::ProcessInput(void) {
     }
 
     if (changed) {
-        m_pendingSend = true;
+        GUIBrightnessApply(m_mode, m_actualIndex);
         m_pendingDraw = true;
     }
     return changed;
@@ -720,7 +698,7 @@ bool GUIBrightnessComponent::ProcessInput(void) {
 void GUIBrightnessComponent::Enter(void) {
     EnsureLoaded();
     m_actualIndex = s_storedIndex;
-    m_pendingSend = true;
+    GUIBrightnessApply(m_mode, m_actualIndex);
     m_pendingDraw = (m_mode == 1U);
 }
 
@@ -729,7 +707,6 @@ void GUIBrightnessComponent::Process(void) {
 }
 
 bool GUIBrightnessComponent::Send(void) {
-    if (m_pendingSend) return SendBrightness();
     if ((m_mode == 1U) && m_pendingDraw && GUIIsLcdReady()) return DrawValue();
     return false;
 }
@@ -738,7 +715,6 @@ void GUIBrightnessComponent::Exit(void) {
     if (m_actualIndex != s_storedIndex) {
         (void)SaveStoredIndex(m_actualIndex);
     }
-    m_pendingSend = false;
     m_pendingDraw = false;
 }
 

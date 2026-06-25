@@ -20,12 +20,14 @@ extern gui_scene_t s_sceneCCentr;
 extern gui_scene_t s_sceneCEdge;
 
 static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK, false);
-static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY);
 static GUIBrightnessComponent s_sceneHomeBrightness(0U, 0U, 0U);
+static GUIHotKeyComponent s_sceneHomeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
 static GUIComponent* s_sceneHomeItems[] = {
   &s_sceneHomeCls,
   &s_sceneHomeJView,
-  &s_sceneHomeBrightness
+  &s_sceneHomeBrightness,
+  &s_sceneHomeHotKeyOk
 };
 gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
@@ -46,22 +48,30 @@ static GUIComponent* s_sceneMainMenuItems[] = {
 gui_scene_t s_sceneMainMenu = GUI_SCENE(s_sceneMainMenuItems);
 
 static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK, true);
-static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY);
+static GUIHotKeyComponent s_sceneCCentrHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCCentrHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
 static GUILabelComponent s_sceneCalibrateBack(16U, 10U, GUI_COLOR_ORANGE, "D\n\nR\n\nO\n\nP");
 static GUILabelComponent s_sceneCalibrateOk(126U, 10U, GUI_COLOR_GREEN, "S\n\nA\n\nV\n\nE");
 static GUIComponent* s_sceneCCentrItems[] = {
   &s_sceneCCentrCls,
   &s_sceneCCentrJView,
+  &s_sceneCCentrHotKeyBack,
+  &s_sceneCCentrHotKeyOk,
   &s_sceneCalibrateBack,
   &s_sceneCalibrateOk
 };
 gui_scene_t s_sceneCCentr = GUI_SCENE(s_sceneCCentrItems);
 
 static GUIClsComponent s_sceneCEdgeCls(GUI_COLOR_BLACK, true);
-static GUIJViewComponent s_sceneCEdgeJView(GUI_J_VIEW_MODE_CAL_EDGE, &s_axisCalX, &s_axisCalY, &s_sceneMainMenu);
+static GUIJViewComponent s_sceneCEdgeJView(GUI_J_VIEW_MODE_CAL_EDGE, &s_axisCalX, &s_axisCalY);
+static GUIHotKeyComponent s_sceneCEdgeHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
 static GUIComponent* s_sceneCEdgeItems[] = {
   &s_sceneCEdgeCls,
   &s_sceneCEdgeJView,
+  &s_sceneCEdgeHotKeyBack,
+  &s_sceneCEdgeHotKeyOk,
   &s_sceneCalibrateBack,
   &s_sceneCalibrateOk
 };

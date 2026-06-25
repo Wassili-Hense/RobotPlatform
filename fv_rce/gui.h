@@ -99,8 +99,7 @@ class GUIJViewComponent : public GUIComponent {
 public:
     GUIJViewComponent(gui_j_view_mode_t mode,
                       gui_axis_cal_t* axisX,
-                      gui_axis_cal_t* axisY,
-                      gui_scene_t* targetScene);
+                      gui_axis_cal_t* axisY);
 
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
@@ -157,7 +156,6 @@ public:
 
 private:
     hmi_data_idx_t m_idx;
-    gui_scene_t* m_targetScene;
 };
 
 // -----------------------------------------------------------------------------
@@ -197,22 +195,16 @@ public:
     void Exit(void) override;
 
     void SetActive(bool active);
-    static GUIMenuItemComponent* FindFirst(gui_scene_t* scene);  // TODO: static function
-    static GUIMenuItemComponent* FindActive(gui_scene_t* scene);  // TODO: static function
 
 private:
+    friend GUIMenuItemComponent* GUIMenuFindActive(void);
     bool Draw(bool active);
     bool ProcessNavigation(void);
-    void SyncPrevActive(void);
 
-    static GUIMenuItemComponent* Cast(GUIComponent* component);  // TODO: static function
-    static const GUIMenuItemComponent* Cast(const GUIComponent* component);  // TODO: static function
-    static GUIMenuItemComponent* FindAdjacent(gui_scene_t* scene, const GUIMenuItemComponent* from, int step);  // TODO: static function
 
     uint8_t m_x;
     uint8_t m_y;
     const char* m_text;
-    gui_scene_t* m_targetScene;
     bool m_active;
     bool m_prevActive;
     bool m_pending;
@@ -237,14 +229,12 @@ private:
     static bool SaveStoredIndex(uint8_t index);
 
     bool ProcessInput(void);
-    bool SendBrightness(void);
     bool DrawValue(void);
 
     uint8_t m_mode;
     uint8_t m_x;
     uint8_t m_y;
     uint8_t m_actualIndex;
-    bool m_pendingSend;  // TODO: not necesary. Call hmi_cmd_set_brightness direct. sendet hmi
     bool m_pendingDraw;
 
     static bool s_loaded;
