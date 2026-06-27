@@ -55,12 +55,11 @@ uint8_t LCD_DrawText(uint8_t x, uint8_t y, const char *text, uint16_t color);
 /* x,y - центр маркера; idx - индекс маркера */
 uint8_t LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color);
 
-/* index: 0 - left, 1 - right, value_pixels: 0..3 */
+/* index: 0 - antenna, 1 - connect, value: 0..3 */
 uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value);
 
-/* index: 0 - left vertical, 1 - top left, 2 - top right, 3 - right vertical
- * value_pixels: 0..70 */
-uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value_pixels);
+/* index: [0 .. 3], value: 0..64 */
+uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value);
 
 #ifdef __cplusplus
 }

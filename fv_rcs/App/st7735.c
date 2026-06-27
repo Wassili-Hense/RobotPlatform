@@ -12,16 +12,13 @@
 #define ST7735_TEXT_CELL_WIDTH   (FONT_7X10_WIDTH + FONT_7X10_SPACING)
 #define ST7735_MAX_TEXT_LEN      21U
 #define ST7735_TEXT_STORAGE_LEN  (ST7735_MAX_TEXT_LEN + 1U)
-#define ST7735_MARKER_COUNT      8U
-#define ST7735_X_OFFSET 0U
+#define ST7735_MARKER_COUNT      11U
+#define ST7735_X_OFFSET 1U
 #define ST7735_Y_OFFSET 24U
 #define ST7735_IO_BUFFER_SIZE     MAX((ST7735_TEXT_CELL_WIDTH * FONT_7X10_HEIGHT * 2U), LCD_HEIGHT*8)
 #define ST7735_COLOR_CHUNK_PIXELS  (ST7735_IO_BUFFER_SIZE / 2U)
-#define ProgressBar_PB_LEN   70U
+#define ProgressBar_PB_LEN   64U
 #define ProgressBar_PB_TH     3U
-#define ProgressBar_RED_LIMIT    3U
-#define ProgressBar_RANGE       64U
-#define ProgressBar_GREEN_LIMIT (ProgressBar_RED_LIMIT + ProgressBar_RANGE)
 
 typedef enum {
   ST7735_CMD_NONE = 0, ST7735_CMD_FILL_RECT, ST7735_CMD_DRAW_TEXT, ST7735_CMD_DRAW_MARKER
@@ -103,34 +100,41 @@ static uint8_t s_backlightLevel = 64U;
 static uint8_t s_backlightApplied = 0U;
 static uint32_t s_backlightOffTick = 0U;
 static uint16_t s_bgColor = LCD_BLACK;
+static uint8_t s_InitSeq = true;
 static const ProgressBar_Spec s_progressBars[4] =
   {
-    { .x0 = 0U, .y0 = LCD_HEIGHT - 1U, .dir = ProgressBar_DIR_UP },
-    { .x0 = (uint8_t) (LCD_WIDTH / 2U - 1U), .y0 = 0U, .dir = ProgressBar_DIR_LEFT },
-    { .x0 = (uint8_t) (LCD_WIDTH / 2U), .y0 = 0U, .dir = ProgressBar_DIR_RIGHT },
-    { .x0 = (uint8_t) (LCD_WIDTH - 1U - ProgressBar_PB_TH), .y0 = LCD_HEIGHT - 1U, .dir = ProgressBar_DIR_UP }
+    { .x0 = 10U, .y0 = 0U, .dir = ProgressBar_DIR_RIGHT },
+    { .x0 = 10U, .y0 = 4U, .dir = ProgressBar_DIR_RIGHT },
+    { .x0 = (uint8_t) (LCD_WIDTH / 2U + 6U), .y0 = 0U, .dir = ProgressBar_DIR_RIGHT },
+    { .x0 = (uint8_t) (LCD_WIDTH / 2U + 6U), .y0 = 4U, .dir = ProgressBar_DIR_RIGHT }
   };
 static uint8_t s_progressBarInitMask = 0U;
 static uint8_t s_progressBarPrev[4] = { 0U, 0U, 0U, 0U };
 
-static const uint8_t s_marker_1[] = { 1U, 0x01U };
-static const uint8_t s_marker_2[] = { 2U, 0x03U, 0x03U };
-static const uint8_t s_marker_3[] = { 3U, 0x07U, 0x07U, 0x07U };
-static const uint8_t s_marker_4[] = { 4U, 0x06U, 0x0FU, 0x0FU, 0x06U };
-static const uint8_t s_marker_5[] = { 5U, 0x0EU, 0x1FU, 0x1FU, 0x1FU, 0x0EU };
-static const uint8_t s_marker_6[] = { 6U, 0x1EU, 0x3FU, 0x3FU, 0x3FU, 0x3FU, 0x1EU };
-static const uint8_t s_marker_7[] = { 7U, 0x1CU, 0x3EU, 0x7FU, 0x7FU, 0x7FU, 0x3EU, 0x1CU };
-static const uint8_t s_marker_8[] = { 8U, 0x3CU, 0x7EU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x7EU, 0x3CU };
+static const uint8_t s_circle_1[] = {1U, 0x01U };
+static const uint8_t s_circle_2[] = {2U, 0x03U, 0x03U };
+static const uint8_t s_circle_3[] = {3U, 0x07U, 0x07U, 0x07U };
+static const uint8_t s_circle_4[] = {4U, 0x06U, 0x0FU, 0x0FU, 0x06U };
+static const uint8_t s_circle_5[] = {5U, 0x0EU, 0x1FU, 0x1FU, 0x1FU, 0x0EU };
+static const uint8_t s_circle_6[] = {6U, 0x1EU, 0x3FU, 0x3FU, 0x3FU, 0x3FU, 0x1EU };
+static const uint8_t s_circle_7[] = {7U, 0x1CU, 0x3EU, 0x7FU, 0x7FU, 0x7FU, 0x3EU, 0x1CU };
+static const uint8_t s_circle_8[] = {8U, 0x3CU, 0x7EU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x7EU, 0x3CU };
+static const uint8_t s_antena[]   = {8U, 0xE0U, 0x18U, 0x04U, 0xC2U, 0x32U, 0x11U, 0xC9U, 0xC9U };
+static const uint8_t s_battery[]  = {8U, 0x18U, 0x3CU, 0x42U, 0x5AU, 0x5AU, 0x5AU, 0x42U, 0x3CU };
+static const uint8_t s_connect[]  = {8U, 0x14U, 0x16U, 0x17U, 0x14U, 0x14U, 0x74U, 0x34U, 0x14U };
 static const uint8_t * const s_markers[ST7735_MARKER_COUNT] =
   {
-  s_marker_1,
-  s_marker_2,
-  s_marker_3,
-  s_marker_4,
-  s_marker_5,
-  s_marker_6,
-  s_marker_7,
-  s_marker_8
+  s_circle_1,
+  s_circle_2,
+  s_circle_3,
+  s_circle_4,
+  s_circle_5,
+  s_circle_6,
+  s_circle_7,
+  s_circle_8,
+  s_antena,
+  s_battery,
+  s_connect
   };
 
 static void ST7735_NotifyStatus(void) {
@@ -425,6 +429,9 @@ static uint8_t ST7735_QueuePop(ST7735_Command *cmd) {
     s_queueWarn = 0U;
     ST7735_NotifyStatus();
   }
+	if(s_InitSeq && s_queueCount == 0U){
+	 s_InitSeq = 0;
+	}
   return 1U;
 }
 
@@ -521,13 +528,8 @@ static uint8_t ST7735_ProcessDrawMarkerStep(void) {
     return 1U;
   }
   size = glyph[0];
-  x0 = (int16_t) m->x - (int16_t) (size / 2U);
-  y0 = (int16_t) m->y - (int16_t) (size / 2U);
-  if ((x0 < 0) || (y0 < 0)) {
-    return 1U;
-  }
   bytes = ST7735_BuildMarkerBitmap(glyph, m->color, s_bgColor);
-  return ST7735_BeginBitmapTransfer((uint8_t) x0, (uint8_t) y0, size, size, bytes);
+  return ST7735_BeginBitmapTransfer((uint8_t) m->x, (uint8_t) m->y, size, size, bytes);
 }
 
 static void ST7735_UpdateBacklightPwm(void) {
@@ -557,11 +559,11 @@ static inline uint8_t ProgressBar_clamp(uint8_t v) {
 }
 
 static inline uint16_t ProgressBar_color_for_len(uint8_t v) {
-  if (v <= ProgressBar_RED_LIMIT) return LCD_RED;
-  if (v >= ProgressBar_GREEN_LIMIT) return LCD_GREEN;
+  if (v == 0U) return LCD_RED;
+  if (v >= ProgressBar_PB_LEN) return LCD_GREEN;
   {
-    uint16_t t = (uint16_t) (v - ProgressBar_RED_LIMIT);
-    uint16_t r5 = (uint16_t) ((ProgressBar_RANGE - 1U - t) / 2U);
+    uint16_t t = (uint16_t) v;
+    uint16_t r5 = (uint16_t) ((ProgressBar_PB_LEN - 1U - t) / 2U);
     return (uint16_t) ((r5 << 11) | (t << 5));   // RGB565
   }
 }
@@ -668,14 +670,15 @@ void LCD_Init(LCD_QueueCallback cb) {
   ST7735_WriteCommand(0x29);
   HAL_Delay(20U);
   ST7735_RuntimeInit();
-  (void) LCD_FillRect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, LCD_BLACK);
+  (void) LCD_FillRect(0U, 0U, LCD_WIDTH, 8U, LCD_BLACK);
+  (void)LCD_DrawMarker(LCD_WIDTH / 2U, 4, 9, LCD_WHITE);
 }
 
 uint8_t LCD_Clear(uint16_t color) {
-  ST7735_QueueReset();
-  return LCD_FillRect(
-  ProgressBar_PB_TH,
-  ProgressBar_PB_TH, (uint8_t) (LCD_WIDTH - (2U * ProgressBar_PB_TH) - 1U), (uint8_t) (LCD_HEIGHT - ProgressBar_PB_TH), color);
+  if(!s_InitSeq){
+    ST7735_QueueReset();
+  }
+  return LCD_FillRect(0U ,8U , LCD_WIDTH, (uint8_t) (LCD_HEIGHT - 8U), color);
 }
 
 uint8_t LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
@@ -729,8 +732,8 @@ uint8_t LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color) {
 
   memset(&cmd, 0, sizeof(cmd));
   cmd.type = ST7735_CMD_DRAW_MARKER;
-  cmd.data.drawMarker.x = x;
-  cmd.data.drawMarker.y = y;
+  cmd.data.drawMarker.x = x0;
+  cmd.data.drawMarker.y = y0;
   cmd.data.drawMarker.idx = idx;
   cmd.data.drawMarker.color = color;
   return ST7735_QueuePush(&cmd);
@@ -738,10 +741,10 @@ uint8_t LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color) {
 
 uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value) {
   if (index == 0U) {
-    return LCD_DrawMarker(4U, 3U, 5U, value ? LCD_BLUE : LCD_GRAY);
+    return LCD_DrawMarker(4U, 4U, 8U, value ? LCD_BLUE : LCD_GRAY);
   } else if (index == 1U) {
     uint16_t color = (value == 3U) ? LCD_BLUE : ((value == 0U) ? LCD_GRAY : LCD_ORANGE);
-    return LCD_DrawMarker((uint8_t) (LCD_WIDTH - 4U), 3U, 5U, color);
+    return LCD_DrawMarker((uint8_t) (LCD_WIDTH - 4U), 3U, 10U, color);
   }
   return 0U;
 }

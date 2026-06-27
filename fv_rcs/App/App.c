@@ -132,21 +132,21 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
   case APP_RX_CMD_LCD_CLEAR:
     if (size >= 3U) {
       uint16_t color = (uint16_t) data[1] | ((uint16_t) data[2] << 8);
-      (void) LCD_Clear(color);
+      //(void) LCD_Clear(color);
     }
     break;
 
   case APP_RX_CMD_LCD_FILL_RECT:
     if (size >= 7U) {
       uint16_t color = (uint16_t) data[5] | ((uint16_t) data[6] << 8);
-      (void) LCD_FillRect(data[1], data[2], data[3], data[4], color);
+      //(void) LCD_FillRect(data[1], data[2], data[3], data[4], color);
     }
     break;
 
   case APP_RX_CMD_LCD_DRAW_MARKER:
     if (size >= 6U) {
       uint16_t color = (uint16_t) data[4] | ((uint16_t) data[5] << 8);
-      (void) LCD_DrawMarker(data[1], data[2], data[3], color);
+      //(void) LCD_DrawMarker(data[1], data[2], data[3], color);
     }
     break;
 
@@ -154,7 +154,7 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
     if (size >= 6U) {
       uint16_t color = (uint16_t) data[3] | ((uint16_t) data[4] << 8);
       if (data[size - 1U] != 0U) data[size - 1U] = 0U;
-      (void) LCD_DrawText(data[1], data[2], (const char*) &data[5], color);
+      //(void) LCD_DrawText(data[1], data[2], (const char*) &data[5], color);
     }
     break;
 
@@ -175,7 +175,7 @@ static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
 
   case APP_RX_CMD_LCD_DRAW_PROGRESS_BAR:
     if ((size >= 3U) && (data[1] <= 2U)) {
-      (void) LCD_DrawProgressBar(data[1], data[2]);
+      //(void) LCD_DrawProgressBar(data[1], data[2]);
     }
     break;
 
@@ -331,6 +331,12 @@ void App_Init(void) {
   (void) Inp_AdcEnsureStarted();
   (void) App_DrawIndicator(0U);
   (void) App_DrawIndicator(1U);
+  // !!!!!!!!!
+  (void) LCD_FillRect(0, 8, 1, LCD_HEIGHT - 8, LCD_RED);
+  (void) LCD_FillRect(LCD_WIDTH - 1, 8, 1, LCD_HEIGHT - 8, LCD_BLUE);
+  (void) LCD_FillRect(0, LCD_HEIGHT-1, LCD_WIDTH, 1, LCD_GREEN);
+
+  // !!!!!!!!!
 
   Tone(757U, 45U);
   HAL_Delay(65U);
