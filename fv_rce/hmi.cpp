@@ -12,6 +12,7 @@ static constexpr uint8_t I2C_ADDR = 0x14;
 static constexpr int I2C_SDA = 21;
 static constexpr int I2C_SCL = 22;
 static constexpr uint8_t I2C_READ_LEN = 6;
+static constexpr uint32_t I2C_WAIT_RETRY_MS = 50U;
 
 static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 12;
 static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON = 14;
@@ -20,6 +21,8 @@ static constexpr uint8_t STATUS_BIT_LCD_BUSY = 15;
 static constexpr uint8_t CMD_BACKLIGHT_TIMEOUT = 0x03;
 static constexpr uint8_t CMD_BACKLIGHT_BRIGHTNESS = 0x04;
 static constexpr uint8_t CMD_TONE = 0x07;
+static constexpr uint8_t CMD_MELODY = 0x08;
+static constexpr uint8_t CMD_POWER_OFF = 0x0F;
 static constexpr uint8_t CMD_LCD_CLEAR = 0x10;
 static constexpr uint8_t CMD_LCD_DRAW_MARKER = 0x12;
 static constexpr uint8_t CMD_LCD_DRAW_TEXT = 0x13;
@@ -29,6 +32,8 @@ static constexpr uint8_t CMD_LCD_PROGRESS = 0x21;
 
 enum hmi_sys_cmd_type_t {
   HMI_SYS_CMD_BEEP = 0,
+  HMI_SYS_CMD_MELODY,
+  HMI_SYS_CMD_POWER_OFF,
   HMI_SYS_CMD_BRIGHTNESS,
   HMI_SYS_CMD_BL_TIMEOUT,
   HMI_SYS_CMD_INDICATOR0,
@@ -44,12 +49,6 @@ typedef struct {
   uint16_t delayMs;
   bool hasData;
 } hmi_sys_beep_t;
-
-typedef struct {
-  uint8_t level;
-  bool hasData;
-} hmi_sys_brightness_t;
-
 typedef struct {
   uint32_t timeoutMs;
   bool hasData;
@@ -69,7 +68,9 @@ static uint16_t s_joyY = 0U;
 static hmi_log_callback_t s_logCallback = nullptr;
 
 static hmi_sys_beep_t s_sysBeep = { 0U, 0U, false };
-static hmi_sys_brightness_t s_sysBrightness = { 0U, false };
+static hmi_sys_u8_t s_sysMelody = { 0U, false };
+static bool s_sysPowerOff = false;
+static hmi_sys_u8_t s_sysBrightness = { 0U, false };
 static hmi_sys_bl_timeout_t s_sysBlTimeout = { 0U, false };
 static hmi_sys_u8_t s_sysIndicator[2] = { { 0U, false }, { 0U, false } };
 static hmi_sys_u8_t s_sysProgress[3] = { { 0U, false }, { 0U, false }, { 0U, false } };
@@ -78,7 +79,6 @@ static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
   return (data & ~(1UL << idx)) | (((uint32_t)(value & 1U)) << idx);
 }
 
-#ifdef DEBUG_HMI
 static void LogMessage(bool emergency, const char* fmt, ...) {
   if ((s_logCallback == nullptr) || (fmt == nullptr)) {
     return;
@@ -99,6 +99,7 @@ static void LogError(const char* funcName, const char* errName) {
   LogMessage(false, "%s - %s", funcName, errName);
 }
 
+#ifdef DEBUG_HMI
 static const char* ButtonNameFromIndex(uint8_t idx) {
   switch (idx) {
     case HMI_DATA_BTN_ON: return "ON";
@@ -149,10 +150,19 @@ static void LogTxBytes(const uint8_t* data, uint8_t len) {
   LogMessage(false, "%s", buf);
 }
 #else
-static void LogError(const char*, const char*) {}
 static void LogStateIfChanged(void) {}
 static void LogTxBytes(const uint8_t*, uint8_t) {}
 #endif
+
+static bool WaitForI2cDevice(void) {
+  for (;;) {
+    Wire.beginTransmission(I2C_ADDR);
+    const uint8_t rc = Wire.endTransmission(true);
+    if (rc == 0U) return true;
+    LogError("hmi_init", "I2C_WAIT");
+    delay(I2C_WAIT_RETRY_MS);
+  }
+}
 
 static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len, bool isLcd) {
   if (!s_initialized) {
@@ -219,6 +229,8 @@ static void ParsePacket(const uint8_t* rx) {
 
 static hmi_sys_cmd_type_t FindNextSysCmd(void) {
   if (s_sysBeep.hasData) return HMI_SYS_CMD_BEEP;
+  if (s_sysMelody.hasData) return HMI_SYS_CMD_MELODY;
+  if (s_sysPowerOff) return HMI_SYS_CMD_POWER_OFF;
   if (s_sysBrightness.hasData) return HMI_SYS_CMD_BRIGHTNESS;
   if (s_sysBlTimeout.hasData) return HMI_SYS_CMD_BL_TIMEOUT;
   if (s_sysIndicator[0].hasData) return HMI_SYS_CMD_INDICATOR0;
@@ -233,6 +245,12 @@ static void ClearSysCmd(hmi_sys_cmd_type_t type) {
   switch (type) {
     case HMI_SYS_CMD_BEEP:
       s_sysBeep.hasData = false;
+      break;
+    case HMI_SYS_CMD_MELODY:
+      s_sysMelody.hasData = false;
+      break;
+    case HMI_SYS_CMD_POWER_OFF:
+      s_sysPowerOff = false;
       break;
     case HMI_SYS_CMD_BRIGHTNESS:
       s_sysBrightness.hasData = false;
@@ -270,6 +288,8 @@ void hmi_init(hmi_log_callback_t log_callback) {
   s_logCallback = log_callback;
 
   s_sysBeep = { 0U, 0U, false };
+  s_sysMelody = { 0U, false };
+  s_sysPowerOff = false;
   s_sysBrightness = { 0U, false };
   s_sysBlTimeout = { 0U, false };
   s_sysIndicator[0] = { 0U, false };
@@ -278,9 +298,16 @@ void hmi_init(hmi_log_callback_t log_callback) {
   s_sysProgress[1] = { 0U, false };
   s_sysProgress[2] = { 0U, false };
 
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(100000);
+  if (!Wire.begin(I2C_SDA, I2C_SCL)) {
+    LogError("hmi_init", "WIRE_BEGIN");
+    return;
+  }
+  if (!Wire.setClock(100000U)) {
+    LogError("hmi_init", "WIRE_CLOCK");
+    return;
+  }
   Wire.setTimeOut(10);
+  (void)WaitForI2cDevice();
   s_initialized = true;
 }
 
@@ -348,8 +375,18 @@ void hmi_sysSend(void) {
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
+    case HMI_SYS_CMD_MELODY: {
+      const uint8_t data[2] = { CMD_MELODY, s_sysMelody.value };
+      rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
+      break;
+    }
+    case HMI_SYS_CMD_POWER_OFF: {
+      const uint8_t data[2] = { CMD_POWER_OFF, 0xAAU };
+      rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
+      break;
+    }
     case HMI_SYS_CMD_BRIGHTNESS: {
-      const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, s_sysBrightness.level };
+      const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, s_sysBrightness.value };
       rc = SendCommand("hmi_sysSend", data, sizeof(data), false);
       break;
     }
@@ -402,7 +439,7 @@ void hmi_cmd_set_brightness(uint8_t level) {
     LogError("hmi_cmd_set_brightness", "NOT_INITIALIZED");
     return;
   }
-  s_sysBrightness.level = level;
+  s_sysBrightness.value = level;
   s_sysBrightness.hasData = true;
 }
 
@@ -414,6 +451,29 @@ void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms) {
   s_sysBeep.divider = divider;
   s_sysBeep.delayMs = delay_ms;
   s_sysBeep.hasData = true;
+}
+
+void hmi_cmd_play_melody(hmi_melody_t melody) {
+  if (!s_initialized) {
+    LogError("hmi_cmd_play_melody", "NOT_INITIALIZED");
+    return;
+  }
+  if ((melody != HMI_MELODY_POWER_ON) &&
+      (melody != HMI_MELODY_CONNECTED) &&
+      (melody != HMI_MELODY_DISCONNECTED)) {
+    LogError("hmi_cmd_play_melody", "INVALID_ARG");
+    return;
+  }
+  s_sysMelody.value = (uint8_t)melody;
+  s_sysMelody.hasData = false; // false for DEBUG time. true;
+}
+
+void hmi_cmd_power_off(void) {
+  if (!s_initialized) {
+    LogError("hmi_cmd_power_off", "NOT_INITIALIZED");
+    return;
+  }
+  s_sysPowerOff = true;
 }
 
 hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color) {

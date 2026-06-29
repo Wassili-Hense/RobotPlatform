@@ -46,6 +46,13 @@ typedef enum {
     HMI_CMD_ERR_I2C_TX          = 4
 } hmi_cmd_result_t;
 
+
+typedef enum {
+    HMI_MELODY_POWER_ON     = 1,
+    HMI_MELODY_CONNECTED    = 2,
+    HMI_MELODY_DISCONNECTED = 3
+} hmi_melody_t;
+
 typedef void (*hmi_log_callback_t)(const char *text, bool emergency);
 
 void hmi_init(hmi_log_callback_t log_callback);
@@ -57,6 +64,8 @@ void hmi_sysSend(void);
 void hmi_cmd_set_backlight_timeout(uint32_t timeout_ms);
 void hmi_cmd_set_brightness(uint8_t level);
 void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms);
+void hmi_cmd_play_melody(hmi_melody_t melody);
+void hmi_cmd_power_off(void);
 
 hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color);
 hmi_cmd_result_t hmi_cmd_lcd_set_bg(uint16_t rgb565_color);
