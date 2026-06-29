@@ -13,7 +13,7 @@
 #define ST7735_MAX_TEXT_LEN      21U
 #define ST7735_TEXT_STORAGE_LEN  (ST7735_MAX_TEXT_LEN + 1U)
 #define ST7735_MARKER_COUNT      11U
-#define ST7735_X_OFFSET 1U
+#define ST7735_X_OFFSET 0U
 #define ST7735_Y_OFFSET 24U
 #define ST7735_IO_BUFFER_SIZE     MAX((ST7735_TEXT_CELL_WIDTH * FONT_7X10_HEIGHT * 2U), LCD_HEIGHT*8)
 #define ST7735_COLOR_CHUNK_PIXELS  (ST7735_IO_BUFFER_SIZE / 2U)
@@ -100,7 +100,7 @@ static uint8_t s_backlightLevel = 64U;
 static uint8_t s_backlightApplied = 0U;
 static uint32_t s_backlightOffTick = 0U;
 static uint16_t s_bgColor = LCD_BLACK;
-static uint8_t s_InitSeq = true;
+static uint8_t s_InitSeq = 1;
 static const ProgressBar_Spec s_progressBars[4] =
   {
     { .x0 = 10U, .y0 = 0U, .dir = ProgressBar_DIR_RIGHT },
@@ -435,20 +435,6 @@ static uint8_t ST7735_QueuePop(ST7735_Command *cmd) {
   return 1U;
 }
 
-static void ST7735_RuntimeInit(void) {
-  memset(&s_active, 0, sizeof(s_active));
-  memset(&s_tx, 0, sizeof(s_tx));
-  s_spiDmaBusy = 0U;
-  s_spiDmaError = 0U;
-  s_backlightLevel = 64U;
-  s_backlightApplied = 0U;
-  s_backlightOffTick = HAL_GetTick();
-  s_bgColor = LCD_BLACK;
-  s_progressBarInitMask = 0U;
-  memset(s_progressBarPrev, 0, sizeof(s_progressBarPrev));
-  ST7735_QueueReset();
-}
-
 static uint8_t ST7735_StartNextCommand(void) {
   if (s_active.busy != 0U) return 1U;
   if (!ST7735_QueuePop(&s_active.cmd)) return 0U;
@@ -496,7 +482,7 @@ static uint8_t ST7735_ProcessDrawTextStep(void) {
   }
   if (ch == '\n') {
     s_active.text.cursorX = t->x;
-    s_active.text.cursorY = (uint8_t) (s_active.text.cursorY + FONT_7X10_HEIGHT);
+    s_active.text.cursorY = (uint8_t) (s_active.text.cursorY + FONT_7X10_HEIGHT + FONT_7X10_HEIGHT / 2);
     s_active.text.index++;
     return 0U;
   }
@@ -517,8 +503,6 @@ static uint8_t ST7735_ProcessDrawMarkerStep(void) {
   ST7735_DrawMarkerCmd *m = &s_active.cmd.data.drawMarker;
   const uint8_t *glyph = ST7735_GetMarkerGlyph(m->idx);
   uint8_t size;
-  int16_t x0;
-  int16_t y0;
   uint16_t bytes;
 
   if (s_tx.type == ST7735_TX_BITMAP) {
@@ -669,9 +653,18 @@ void LCD_Init(LCD_QueueCallback cb) {
   }
   ST7735_WriteCommand(0x29);
   HAL_Delay(20U);
-  ST7735_RuntimeInit();
-  (void) LCD_FillRect(0U, 0U, LCD_WIDTH, 8U, LCD_BLACK);
-  (void)LCD_DrawMarker(LCD_WIDTH / 2U, 4, 9, LCD_WHITE);
+
+  memset(&s_active, 0, sizeof(s_active));
+  memset(&s_tx, 0, sizeof(s_tx));
+  s_spiDmaBusy = 0U;
+  s_spiDmaError = 0U;
+  s_backlightLevel = 64U;
+  s_backlightApplied = 0U;
+  s_backlightOffTick = HAL_GetTick();
+  s_bgColor = LCD_BLACK;
+  s_progressBarInitMask = 0U;
+  memset(s_progressBarPrev, 0, sizeof(s_progressBarPrev));
+  ST7735_QueueReset();
 }
 
 uint8_t LCD_Clear(uint16_t color) {
@@ -744,7 +737,7 @@ uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value) {
     return LCD_DrawMarker(4U, 4U, 8U, value ? LCD_BLUE : LCD_GRAY);
   } else if (index == 1U) {
     uint16_t color = (value == 3U) ? LCD_BLUE : ((value == 0U) ? LCD_GRAY : LCD_ORANGE);
-    return LCD_DrawMarker((uint8_t) (LCD_WIDTH - 4U), 3U, 10U, color);
+    return LCD_DrawMarker((uint8_t) (LCD_WIDTH - 4U), 4U, 10U, color);
   }
   return 0U;
 }

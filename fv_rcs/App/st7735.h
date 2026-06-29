@@ -58,7 +58,7 @@ uint8_t LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color);
 /* index: 0 - antenna, 1 - connect, value: 0..3 */
 uint8_t LCD_DrawIndicator(uint8_t index, uint8_t value);
 
-/* index: [0 .. 3], value: 0..64 */
+/* index: 0 - rssi rp, 1 - rssi rc, 2 - batt rp, 3 - batt rc , value: 0..64 */
 uint8_t LCD_DrawProgressBar(uint8_t index, uint8_t value);
 
 #ifdef __cplusplus

@@ -55,6 +55,13 @@ Multibyte parameters are little-endian.
 - Tone(divider, delay_ms)
   - divider = 1000000 / Hz
   - format: [0x07][divider_lo][divider_hi][delay_lo][delay_hi]
+- Melody(melody)
+  - melody: 1 - POWER_ON, 2 - CONNECTED, 3 - DISCONNECTED
+  - format: [0x08][melody]
+
+- PowerOff()
+  - immediately disables PA11 (power latch)
+  - format: [0x0F][0xAA]
 
 - LCD_Clear(color)
   - color: RGB565
@@ -92,12 +99,9 @@ Multibyte parameters are little-endian.
 
 - LCD_DrawProgressBar(index, value)
   - index:
-    - 0 - left vertical
-    - 1 - top left
-    - 2 - top right
+    - 0 - RSSI RP
+    - 1 - RSSI RC
+    - 2 - Batt RP
   - value: 0..70
   - format: [0x21][index][value]
   - LCD service time in slave: about 4.760 ms
-
-Note:
-- progress bar index 3 (right vertical) is used internally by firmware in App_ProcessAdc() for battery indication and is not exposed via I2C write command.
