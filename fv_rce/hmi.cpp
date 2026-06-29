@@ -465,7 +465,7 @@ void hmi_cmd_play_melody(hmi_melody_t melody) {
     return;
   }
   s_sysMelody.value = (uint8_t)melody;
-  s_sysMelody.hasData = false; // false for DEBUG time. true;
+  s_sysMelody.hasData = true;
 }
 
 void hmi_cmd_power_off(void) {

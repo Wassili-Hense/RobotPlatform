@@ -82,7 +82,6 @@ static const CommandEntry s_commands[] = {
      (void)argsCount;
      hmi_cmd_play_melody((hmi_melody_t)args[0]);
    } },
-
   { "T", 2, [](int32_t args[], uint8_t argsCount) {
      (void)argsCount;
      const uint32_t hz = (uint32_t)args[0];
@@ -171,7 +170,7 @@ static void AppProcessHomePowerOff(void) {
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 301;
 
-  if (GUIGetActiveScene() != &s_sceneHome || hmi_changed(HMI_DATA_BTN_ANYKEY) 
+  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY) 
     || (hmi_changed(HMI_DATA_JOY_X) && (hmi_get(HMI_DATA_JOY_X) < s_axisCalX.cMin || hmi_get(HMI_DATA_JOY_X) > s_axisCalX.cMax))
     || (hmi_changed(HMI_DATA_JOY_Y) && (hmi_get(HMI_DATA_JOY_Y) < s_axisCalY.cMin || hmi_get(HMI_DATA_JOY_Y) > s_axisCalY.cMax))) {
     lastActivityMs = now;
@@ -180,14 +179,12 @@ static void AppProcessHomePowerOff(void) {
   }
   const uint32_t idleS = (uint32_t)(now - lastActivityMs) / 1000U;
   const int32_t remainingS = 300L - (int32_t)idleS;
-  if(remainingS <= 15 && prevRemSec>15){
-    hmi_cmd_play_tone(1012U, 100U);
-  } else if(remainingS <= 5 && prevRemSec>5){
-    hmi_cmd_play_tone(1276U, 250U);
-  } else if(remainingS <= 1 && prevRemSec>1){
-    hmi_cmd_play_tone(1515U, 500U);
+  if((remainingS <= 6 && prevRemSec > 6) || (remainingS <= 4 && prevRemSec > 4) || (remainingS <= 2 && prevRemSec > 2)){
+    hmi_cmd_play_tone(500U, 50U);
+  } else if(remainingS <= 1 && prevRemSec > 1){
+    hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
   } else if(remainingS <= 0 && prevRemSec > 0){
-      hmi_cmd_power_off();
+    hmi_cmd_power_off();
   }
   prevRemSec = remainingS;
 }
@@ -228,7 +225,8 @@ static void AppTask(void* arg) {
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
-  hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
+  //hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
+  hmi_cmd_play_tone(200, 50);
   GUISetHomeScene(&s_sceneHome);
   GUISwitchScene(&s_sceneHome);
   (void)xTaskCreatePinnedToCore(AppTask, "AppTask", 4096U, nullptr, 2, &s_appTaskHandle, 1);
