@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -10,6 +11,8 @@
 #include "hmi.h"
 #include "gui.h"
 #include "serial_bg.h"
+#include "pec_link.h"
+#include "pen_common.h"
 
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
@@ -52,47 +55,7 @@ static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu
 static GUIComponent* s_sceneCEdgeItems[] = { &s_sceneCEdgeCls, &s_sceneCEdgeJView, &s_sceneCEdgeHotKeyBack, &s_sceneCEdgeHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
 gui_scene_t s_sceneCEdge = GUI_SCENE(s_sceneCEdgeItems);
 
-// [Command]
-typedef void (*cmd_func_t)(int32_t args[], uint8_t argsCount);
-
-typedef struct {
-  const char* name;
-  uint8_t argsCount;
-  cmd_func_t func;
-} CommandEntry;
-
-static const CommandEntry s_commands[] = {
-  { "A", 1, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     hmi_cmd_lcd_set_progress(0U, (uint8_t)args[0]);
-   } },
-  { "B", 1, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     hmi_cmd_lcd_set_progress(1U, (uint8_t)args[0]);
-   } },
-  { "C", 1, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     hmi_cmd_lcd_set_progress(2U, (uint8_t)args[0]);
-   } },
-  { "D", 1, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     hmi_cmd_lcd_set_indicator(0U, args[0] != 0);
-   } },
-  { "M", 1, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     hmi_cmd_play_melody((hmi_melody_t)args[0]);
-   } },
-  { "T", 2, [](int32_t args[], uint8_t argsCount) {
-     (void)argsCount;
-     const uint32_t hz = (uint32_t)args[0];
-     if ((args[1] < 0) || ((uint32_t)args[1] > 65535U)) return;
-     const uint32_t divider32 = (hz > 20U && hz < 20000U) ? (1000000U / hz) : 0U;
-     hmi_cmd_play_tone((uint16_t)divider32, (uint16_t)args[1]);
-   } }
-};
-
-static constexpr uint8_t COMMAND_COUNT = sizeof(s_commands) / sizeof(s_commands[0]);
-static constexpr uint8_t MAX_ARGS = 2U;
+// [App constants]
 static constexpr uint32_t APP_TASK_PERIOD_MS = 5U;
 static constexpr uint32_t APP_HOME_POWER_OFF_TIMEOUT_MS = 5UL * 60UL * 1000UL;
 static constexpr BaseType_t APP_TASK_CORE_ID = 1;
@@ -105,48 +68,6 @@ static bool s_homePowerOffWarn15Done = false;
 static bool s_homePowerOffWarn5Done = false;
 static bool s_homePowerOffQueued = false;
 
-static bool ParseInt32(const char* text, int32_t* outValue) {
-  if ((text == nullptr) || (*text == '\0') || (outValue == nullptr)) return false;
-  char* endPtr = nullptr;
-  long value = strtol(text, &endPtr, 10);
-  if (*endPtr != '\0') return false;
-  if ((value < INT32_MIN) || (value > INT32_MAX)) return false;
-  *outValue = (int32_t)value;
-  return true;
-}
-
-static void ParseAndDispatch(char* line) {
-  char* savePtr = nullptr;
-  char* token;
-  uint8_t cmdIdx = 0U;
-  const CommandEntry* cmd;
-  int32_t args[MAX_ARGS];
-  uint8_t argsCount = 0U;
-
-  if ((line == nullptr) || (*line == '\0')) return;
-
-  token = strtok_r(line, " \t", &savePtr);
-  if (token == nullptr) return;
-
-  for (; cmdIdx < COMMAND_COUNT; ++cmdIdx) {
-    if (strcmp(token, s_commands[cmdIdx].name) == 0) break;
-  }
-  if (cmdIdx >= COMMAND_COUNT) return;
-
-  cmd = &s_commands[cmdIdx];
-  if (cmd->argsCount > MAX_ARGS) return;
-
-  while (true) {
-    token = strtok_r(nullptr, " \t", &savePtr);
-    if (token == nullptr) break;
-    if (argsCount >= MAX_ARGS) return;
-    if (!ParseInt32(token, &args[argsCount])) return;
-    ++argsCount;
-  }
-
-  if (argsCount < cmd->argsCount) return;
-  cmd->func(args, argsCount);
-}
 // [Log]
 static void HmiLogToSerial(const char* text, bool emergency) {
   if (text == nullptr) {
@@ -162,6 +83,123 @@ static void HmiLogToSerial(const char* text, bool emergency) {
   }
 
   (void)serial_bg_send_line(text);
+}
+
+
+static bool PecLineToSerial(const char* text) {
+  if ((text == nullptr) || !serial_bg_is_connected()) return false;
+  return serial_bg_send_line(text);
+}
+
+static float AppNormalizeAxis(uint16_t raw, const gui_axis_cal_t& cal) {
+  if (raw <= cal.eMin) return -1.0f;
+  if (raw >= cal.eMax) return 1.0f;
+  if ((raw >= cal.cMin) && (raw <= cal.cMax)) return 0.0f;
+  if (raw < cal.cMin) {
+    const uint16_t spanRaw = (cal.cMin > cal.eMin) ? (uint16_t)(cal.cMin - cal.eMin) : 1U;
+    float value = -1.0f + ((float)(raw - cal.eMin) / (float)spanRaw);
+    if (value > 0.0f) value = 0.0f;
+    if (value < -1.0f) value = -1.0f;
+    return value;
+  }
+  const uint16_t spanRaw = (cal.eMax > cal.cMax) ? (uint16_t)(cal.eMax - cal.cMax) : 1U;
+  float value = (float)(raw - cal.cMax) / (float)spanRaw;
+  if (value < 0.0f) value = 0.0f;
+  if (value > 1.0f) value = 1.0f;
+  return value;
+}
+
+static void AppProcessPecUi(void) {
+  static bool prevConnected = false;
+  static uint8_t prevP0 = 0xFFU;
+  static uint8_t prevP1 = 0xFFU;
+  static uint8_t prevP2 = 0xFFU;
+  static uint8_t prevErr = 0U;
+
+  pec_status_t st;
+  if (!pec_take_status(&st)) return;
+
+  const uint8_t p1 = st.connected ? pen_rssi_to_progress(st.peerRssi) : 0U;
+  const uint8_t p2 = st.connected ? pen_rssi_to_progress(st.localRssi) : 0U;
+
+  if (prevConnected != st.connected) {
+    hmi_cmd_lcd_set_indicator(0U, st.connected);
+    hmi_cmd_play_melody(st.connected ? HMI_MELODY_CONNECTED : HMI_MELODY_DISCONNECTED);
+    prevConnected = st.connected;
+  }
+  if (prevP0 != st.battery) { hmi_cmd_lcd_set_progress(2U, st.battery); prevP0 = st.battery; }
+  if (prevP1 != p1) { hmi_cmd_lcd_set_progress(0U, p1); prevP1 = p1; }
+  if (prevP2 != p2) { hmi_cmd_lcd_set_progress(1U, p2); prevP2 = p2; }
+
+  if ((st.errorCode != 0U) && (prevErr != st.errorCode)) {
+    char errText[8];
+    snprintf(errText, sizeof(errText), "E%u", (unsigned)st.errorCode);
+    hmi_cmd_lcd_draw_text(0U, 0U, GUI_COLOR_ORANGE, errText);
+    prevErr = st.errorCode;
+  }
+}
+
+static void AppProcessPecTx(void) {
+  static uint32_t lastJoyTxMs = 0U;
+  static uint32_t lastUsbTxMs = 0U;
+  static float lastJoyX = 0.0f;
+  static float lastJoyY = 0.0f;
+  static bool hasJoySample = false;
+  static bool lastUsbConnected = false;
+  static int32_t lset = 0;
+  static int32_t rset = 0;
+
+  const uint32_t now = millis();
+  if (!pec_is_connected()) {
+    hasJoySample = false;
+    lastJoyTxMs = 0U;
+    lastUsbTxMs = 0U;
+    return;
+  }
+
+  const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
+  const float joyY = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_Y), s_axisCalY);
+  const bool joyChanged = hmi_changed(HMI_DATA_JOY_X) || hmi_changed(HMI_DATA_JOY_Y) ||
+                          !hasJoySample ||
+                          (fabsf(joyX - lastJoyX) >= 0.0025f) ||
+                          (fabsf(joyY - lastJoyY) >= 0.0025f);
+  const bool joyExpired = !hasJoySample || ((now - lastJoyTxMs) >= 500U);
+  if (joyChanged || joyExpired) {
+    (void)pec_send_stream_f(PEC_VAR_JX, joyX, 500U);
+    (void)pec_send_stream_f(PEC_VAR_JY, joyY, 500U);
+    lastJoyX = joyX;
+    lastJoyY = joyY;
+    lastJoyTxMs = now;
+    hasJoySample = true;
+  }
+
+  // LUP/LDN/RUP/RDN используются как параметры только на Home.
+  // В меню (GUIGetActiveScene() != &s_sceneHome) эти кнопки остаются за GUI.
+  if (GUIGetActiveScene() == &s_sceneHome) {
+    if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U)) {
+      ++lset;
+      (void)pec_send_state_i(PEC_VAR_LSET, lset, 0U);
+    }
+    if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U)) {
+      --lset;
+      (void)pec_send_state_i(PEC_VAR_LSET, lset, 0U);
+    }
+    if (hmi_changed(HMI_DATA_BTN_RUP) && (hmi_get(HMI_DATA_BTN_RUP) != 0U)) {
+      ++rset;
+      (void)pec_send_state_i(PEC_VAR_RSET, rset, 0U);
+    }
+    if (hmi_changed(HMI_DATA_BTN_RDN) && (hmi_get(HMI_DATA_BTN_RDN) != 0U)) {
+      --rset;
+      (void)pec_send_state_i(PEC_VAR_RSET, rset, 0U);
+    }
+  }
+
+  const bool usbConnected = serial_bg_is_connected();
+  if ((usbConnected != lastUsbConnected) || ((now - lastUsbTxMs) >= 2000U)) {
+    (void)pec_send_state_i(PEC_VAR_USBC, usbConnected ? 1 : 0, 2000U);
+    lastUsbConnected = usbConnected;
+    lastUsbTxMs = now;
+  }
 }
 
 // [Auto power off]
@@ -203,8 +241,11 @@ static void AppTask(void* arg) {
         const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
         serial_bg_set_connected(connected);
         hmi_cmd_lcd_set_indicator(1U, connected);
+        (void)pec_send_state_i(PEC_VAR_USBC, connected ? 1 : 0, 2000U);
       }
       AppProcessHomePowerOff();
+      AppProcessPecUi();
+      AppProcessPecTx();
       //GUI
       if (!GUIServiceActiveScene()) {
         hmi_sysSend();
@@ -214,7 +255,7 @@ static void AppTask(void* arg) {
         char line[SERIAL_BG_LINE_CAP];
 
         if (serial_bg_receive_line(line, sizeof(line))) {
-          ParseAndDispatch(line);
+          (void)pec_pc_rx_line(line);
         }
       }
     }
@@ -225,6 +266,7 @@ static void AppTask(void* arg) {
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
+  (void)pec_begin(PecLineToSerial, 1, 2, 4096U);
   //hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
   hmi_cmd_play_tone(200, 50);
   GUISetHomeScene(&s_sceneHome);
