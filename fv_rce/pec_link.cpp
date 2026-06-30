@@ -50,7 +50,7 @@ static TaskHandle_t s_task = nullptr;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static pec_event_t s_events[PEC_EVENT_CAP];
 static pec_stream_cache_t s_streams[PEC_STREAM_CACHE_CAP];
-static pec_line_fn_t s_line = nullptr;
+static pec_rx_event_fn_t s_rxEvent = nullptr;
 static pec_state_t s_state = PEC_DISCOVERY;
 static uint8_t s_peerMac[6] = {};
 static bool s_peerValid = false;
@@ -72,13 +72,9 @@ static uint32_t s_lastTxMs = 0U;
 static uint32_t s_lastRxMs = 0U;
 static uint32_t s_stateStartMs = 0U;
 static uint32_t s_secureInstallAtMs = 0U;
-static volatile bool s_statusDirty = true;
 static volatile bool s_connected = false;
 static volatile int8_t s_peerRssi = -100;
 static volatile int8_t s_localRssi = -100;
-static volatile uint8_t s_battery = 0U;
-static volatile uint8_t s_errorCode = PEC_HW_ERR_NONE;
-static volatile int32_t s_errorDetail = 0;
 static volatile uint32_t s_eventDropCount = 0U;
 static volatile uint32_t s_badFrameCount = 0U;
 static uint32_t s_reportedEventDropCount = 0U;
@@ -87,17 +83,24 @@ static uint32_t s_reportedBadFrameCount = 0U;
 static bool SendVarI(uint8_t msgType, uint32_t varId, int32_t value, uint16_t ttlMs);
 static bool SendVarF(uint8_t msgType, uint32_t varId, float value, uint16_t ttlMs);
 
-static bool Line(const char* text) { return (s_line != nullptr) && (text != nullptr) && s_line(text); }
+static bool EmitRxEvent(const pec_rx_event_t& ev) { return (s_rxEvent != nullptr) && s_rxEvent(&ev); }
+
+static bool EmitLink(uint8_t code, int8_t rssi = -100) {
+    pec_rx_event_t ev = {};
+    ev.type = PEC_RX_LINK;
+    ev.msgType = 0U;
+    ev.data.link.code = code;
+    ev.data.link.rssi = rssi;
+    return EmitRxEvent(ev);
+}
 
 static void EmitError(uint8_t code, int32_t detail) {
-    char line[32];
-    portENTER_CRITICAL(&s_mux);
-    s_errorCode = code;
-    s_errorDetail = detail;
-    s_statusDirty = true;
-    portEXIT_CRITICAL(&s_mux);
-    snprintf(line, sizeof(line), "@ERR %u %ld", (unsigned)code, (long)detail);
-    (void)Line(line);
+    pec_rx_event_t ev = {};
+    ev.type = PEC_RX_ERROR;
+    ev.msgType = 0U;
+    ev.data.error.code = code;
+    ev.data.error.detail = detail;
+    (void)EmitRxEvent(ev);
 }
 
 static bool MacIsSet(const uint8_t mac[6]) {
@@ -110,14 +113,6 @@ static void SetLinkStatus(bool connected, int8_t peerRssi, int8_t localRssi) {
     s_connected = connected;
     s_peerRssi = peerRssi;
     s_localRssi = localRssi;
-    s_statusDirty = true;
-    portEXIT_CRITICAL(&s_mux);
-}
-
-static void SetBattery(uint8_t battery) {
-    portENTER_CRITICAL(&s_mux);
-    s_battery = battery;
-    s_statusDirty = true;
     portEXIT_CRITICAL(&s_mux);
 }
 
@@ -139,7 +134,7 @@ static void ClearSessionMaterial(void) {
     ClearStreamCache();
 }
 
-static void ResetToDiscovery(const char* reason) {
+static void ResetToDiscovery(uint8_t reasonCode) {
     if (s_peerValid && MacIsSet(s_peerMac) && esp_now_is_peer_exist(s_peerMac)) (void)esp_now_del_peer(s_peerMac);
     ClearSessionMaterial();
     s_state = PEC_DISCOVERY;
@@ -148,7 +143,7 @@ static void ResetToDiscovery(const char* reason) {
     s_stateStartMs = millis();
     s_secureInstallAtMs = 0U;
     SetLinkStatus(false, -100, -100);
-    if (reason != nullptr) (void)Line(reason);
+    if (reasonCode != 0U) (void)EmitLink(reasonCode);
 }
 
 static bool IsStateMsg(uint8_t type) { return (type == MSG_STATE_I_VAR) || (type == MSG_STATE_F_VAR); }
@@ -250,7 +245,7 @@ static bool InstallEncryptedPeer(void) {
     s_secureInstallAtMs = 0U;
     s_hbCounter = 0U;
     SetLinkStatus(true, -100, -100);
-    (void)Line("@LINK SECURE");
+    (void)EmitLink(PEC_LINK_SECURE);
     return true;
 }
 
@@ -331,92 +326,107 @@ static bool SendVarF(uint8_t msgType, uint32_t varId, float value, uint16_t ttlM
     return ok;
 }
 
-static bool ForwardVarIToPc(const pen_var_i_payload_t* p, uint8_t msgType, uint16_t seq) {
-    if (p->varId == PEN_VAR_HB) return true;
-    char name[5]; char line[32]; pen_var_id_to_text(p->varId, name);
-    snprintf(line, sizeof(line), "%s %ld I %u %u", name, (long)p->value, (unsigned)msgType, (unsigned)seq);
-    return Line(line);
+static bool EmitVarIToApp(uint8_t msgType, uint16_t seq, uint32_t varId, int32_t value, uint16_t ttlMs) {
+    pec_rx_event_t out = {};
+    out.type = PEC_RX_VAR_I;
+    out.msgType = msgType;
+    out.data.varI.seq = seq;
+    out.data.varI.ttlMs = ttlMs;
+    out.data.varI.varId = varId;
+    out.data.varI.value = value;
+    return EmitRxEvent(out);
 }
 
-static bool ForwardVarFToPc(const pen_var_f_payload_t* p, uint8_t msgType, uint16_t seq) {
-    char name[5]; char line[32]; pen_var_id_to_text(p->varId, name);
-    snprintf(line, sizeof(line), "%s %.4f F %u %u", name, (double)p->value, (unsigned)msgType, (unsigned)seq);
-    return Line(line);
+static bool EmitVarFToApp(uint8_t msgType, uint16_t seq, uint32_t varId, float value, uint16_t ttlMs) {
+    pec_rx_event_t out = {};
+    out.type = PEC_RX_VAR_F;
+    out.msgType = msgType;
+    out.data.varF.seq = seq;
+    out.data.varF.ttlMs = ttlMs;
+    out.data.varF.varId = varId;
+    out.data.varF.value = value;
+    return EmitRxEvent(out);
 }
-static void SetPeerRssi(int8_t peerRssi) {
-    portENTER_CRITICAL(&s_mux);
-    s_peerRssi = peerRssi;
-    s_statusDirty = true;
-    portEXIT_CRITICAL(&s_mux);
+
+static bool QueueRxVarI(const pen_var_i_payload_t* p, const pec_event_t& ev) {
+    if (p == nullptr) return false;
+    if (p->varId == PEN_VAR_HB) return true;
+
+    if (!EmitVarIToApp(ev.msgType, ev.seq, p->varId, p->value, p->ttlMs)) return false;
+
+    if (p->varId == PEC_VAR_RSSI) {
+        // Для PC RSSL идёт отдельным VAR_I сообщением сразу после RSSI.
+        return EmitVarIToApp(MSG_STREAM_I_VAR, ev.seq, PEC_VAR_RSSL, (int32_t)ev.rssi, p->ttlMs);
+    }
+    return true;
 }
+
+static bool QueueRxVarF(const pen_var_f_payload_t* p, const pec_event_t& ev) {
+    if (p == nullptr) return false;
+    return EmitVarFToApp(ev.msgType, ev.seq, p->varId, p->value, p->ttlMs);
+}
+
 static void HandleVarI(const pec_event_t& ev) {
     if (!SecureEventOk(ev)) return;
     const auto* p = reinterpret_cast<const pen_var_i_payload_t*>(ev.payload);
-    bool handled = false;
-    if (p->varId == PEC_VAR_BATP) {
-      int32_t v = p->value;
-      if (v < 0) v = 0;
-      if (v > 100) v = 100;
-      SetBattery((uint8_t)v);
-      handled = true;
-
-    } else if (p->varId == PEC_VAR_RSSI) {
-
-      int32_t v = p->value;
-
-      // RSSI [-127..0]
-      if (v < -127) v = -127;
-      if (v > 0) v = 0;
-
-      SetPeerRssi((int8_t)v);
-      handled = true;
-
-    } else {
-      handled = ForwardVarIToPc(p, ev.msgType, ev.seq);
+    const bool handled = QueueRxVarI(p, ev);
+    if (IsStateMsg(ev.msgType) || IsEventMsg(ev.msgType)) {
+        if (handled) (void)SendAckTo(ev.mac, ev.seq, p->varId);
+        else (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_UNSUPPORTED_VAR);
     }
-    if (IsStateMsg(ev.msgType) || IsEventMsg(ev.msgType)) { if (handled) (void)SendAckTo(ev.mac, ev.seq, p->varId); else (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_UNSUPPORTED_VAR); }
 }
 
 static void HandleVarF(const pec_event_t& ev) {
     if (!SecureEventOk(ev)) return;
     const auto* p = reinterpret_cast<const pen_var_f_payload_t*>(ev.payload);
-    const bool handled = ForwardVarFToPc(p, ev.msgType, ev.seq);
-    if (IsStateMsg(ev.msgType) || IsEventMsg(ev.msgType)) { if (handled) (void)SendAckTo(ev.mac, ev.seq, p->varId); else (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_UNSUPPORTED_VAR); }
+    const bool handled = QueueRxVarF(p, ev);
+    if (IsStateMsg(ev.msgType) || IsEventMsg(ev.msgType)) {
+        if (handled) (void)SendAckTo(ev.mac, ev.seq, p->varId);
+        else (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_UNSUPPORTED_VAR);
+    }
 }
 
 static void HandleAck(const pec_event_t& ev) {
     if (!SecureEventOk(ev)) return;
     const auto* p = reinterpret_cast<const pen_ack_payload_t*>(ev.payload);
-    char name[5]; char line[32]; pen_var_id_to_text(p->varId, name);
-    snprintf(line, sizeof(line), "@ACK %u %s", (unsigned)p->ackSeq, name);
-    (void)Line(line);
+    pec_rx_event_t out = {};
+    out.type = PEC_RX_ACK;
+    out.msgType = ev.msgType;
+    out.data.ack.seq = ev.seq;
+    out.data.ack.ackSeq = p->ackSeq;
+    out.data.ack.varId = p->varId;
+    (void)EmitRxEvent(out);
 }
 
 static void HandleNack(const pec_event_t& ev) {
     if (!SecureEventOk(ev)) return;
     const auto* p = reinterpret_cast<const pen_nack_payload_t*>(ev.payload);
-    char name[5]; char line[32]; pen_var_id_to_text(p->varId, name);
-    snprintf(line, sizeof(line), "@NACK %u %s %u", (unsigned)p->ackSeq, name, (unsigned)p->reason);
-    (void)Line(line);
+    pec_rx_event_t out = {};
+    out.type = PEC_RX_NACK;
+    out.msgType = ev.msgType;
+    out.data.nack.seq = ev.seq;
+    out.data.nack.ackSeq = p->ackSeq;
+    out.data.nack.varId = p->varId;
+    out.data.nack.reason = p->reason;
+    (void)EmitRxEvent(out);
 }
 
 static void ProcessEvent(const pec_event_t& ev) {
-    char line[32];
     if ((ev.type == PEC_EVT_DISC) && (s_state == PEC_DISCOVERY)) {
         const auto* p = reinterpret_cast<const pen_discovery_rsp_payload_t*>(ev.payload);
         memcpy(s_peerMac, ev.mac, 6U); s_peerValid = true; s_deviceId = p->deviceId; esp_fill_random(s_rcNonce, sizeof(s_rcNonce));
-        snprintf(line, sizeof(line), "@DISC %d", (int)ev.rssi); (void)Line(line);
+        (void)EmitLink(PEC_LINK_DISC, ev.rssi);
         s_state = PEC_CONNECTING; s_stateStartMs = millis(); s_lastTxMs = 0U; SetLinkStatus(false, -100, -100);
     } else if ((ev.type == PEC_EVT_CONNECT_RSP) && (s_state == PEC_CONNECTING) && (memcmp(ev.mac, s_peerMac, 6U) == 0)) {
         const auto* p = reinterpret_cast<const pen_connect_rsp_payload_t*>(ev.payload);
-        if ((ev.sessionId != 0U) || (memcmp(p->devMac, ev.mac, 6U) != 0)) { ResetToDiscovery("@LINK MAC_BAD"); return; }
+        if ((ev.sessionId != 0U) || (memcmp(p->devMac, ev.mac, 6U) != 0)) { ResetToDiscovery(PEC_LINK_MAC_BAD); return; }
         memcpy(s_devMac, p->devMac, sizeof(s_devMac)); s_deviceId = p->deviceId; s_sessionId = p->sessionId; memcpy(s_devNonce, p->devNonce, sizeof(s_devNonce));
         pen_derive_session(s_rcId, s_deviceId, s_sessionId, s_ownMac, s_devMac, s_rcNonce, s_devNonce, s_sessionKey, s_pmk, s_lmk, s_rcProof, s_devProof);
-        s_state = PEC_AUTHING; s_stateStartMs = millis(); s_lastTxMs = 0U; (void)Line("@LINK CONNECTED");
+        s_state = PEC_AUTHING; s_stateStartMs = millis(); s_lastTxMs = 0U; (void)EmitLink(PEC_LINK_CONNECTED);
     } else if ((ev.type == PEC_EVT_AUTH_RSP) && (s_state == PEC_AUTHING) && (memcmp(ev.mac, s_peerMac, 6U) == 0)) {
         const auto* p = reinterpret_cast<const pen_auth_rsp_payload_t*>(ev.payload);
-        if ((ev.sessionId == s_sessionId) && (memcmp(p->devProof, s_devProof, 16U) == 0)) { (void)Line("@LINK AUTH_OK"); (void)SendAckTo(ev.mac, ev.seq, 0U); s_state = PEC_SECURE_WAIT; s_secureInstallAtMs = millis() + PEC_SECURE_DELAY_MS; }
-        else ResetToDiscovery("@LINK AUTH_BAD");
+        if ((ev.sessionId == s_sessionId) && (memcmp(p->devProof, s_devProof, 16U) == 0)) { (void)EmitLink(PEC_LINK_AUTH_OK); (void)SendAckTo(ev.mac, ev.seq, 0U); s_state = PEC_SECURE_WAIT; s_secureInstallAtMs = millis() + PEC_SECURE_DELAY_MS; }
+        else ResetToDiscovery(PEC_LINK_AUTH_BAD);
     } else if (ev.type == PEC_EVT_VAR_I) HandleVarI(ev);
     else if (ev.type == PEC_EVT_VAR_F) HandleVarF(ev);
     else if (ev.type == PEC_EVT_ACK) HandleAck(ev);
@@ -448,57 +458,31 @@ static void Task(void*) {
     if (esp_wifi_set_promiscuous(false) != ESP_OK) EmitError(PEC_HW_ERR_WIFI, 4);
     if (esp_now_init() != ESP_OK) { EmitError(PEC_HW_ERR_ESPNOW, 1); s_task = nullptr; vTaskDelete(nullptr); return; }
     if (esp_now_register_recv_cb(OnRecv) != ESP_OK) { EmitError(PEC_HW_ERR_ESPNOW, 2); (void)esp_now_deinit(); s_task = nullptr; vTaskDelete(nullptr); return; }
-    s_rcId = pen_make_id_from_efuse(); (void)Line("@LINK READY");
+    s_rcId = pen_make_id_from_efuse(); (void)EmitLink(PEC_LINK_READY);
     TickType_t last = xTaskGetTickCount();
     for (;;) {
         DrainEvents(); ReportCounters(); const uint32_t now = millis();
         if ((s_state == PEC_DISCOVERY) && ((now - s_lastTxMs) >= PEC_DISCOVERY_MS)) { s_lastTxMs = now; (void)SendDiscovery(); }
-        else if (s_state == PEC_CONNECTING) { if ((now - s_stateStartMs) > PEC_AUTH_TIMEOUT_MS) ResetToDiscovery("@LINK CONN_TO"); else if ((now - s_lastTxMs) >= PEC_RETRY_MS) { s_lastTxMs = now; (void)SendConnect(); } }
-        else if (s_state == PEC_AUTHING) { if ((now - s_stateStartMs) > PEC_AUTH_TIMEOUT_MS) ResetToDiscovery("@LINK AUTH_TO"); else if ((now - s_lastTxMs) >= PEC_RETRY_MS) { s_lastTxMs = now; (void)SendAuth(); } }
-        else if (s_state == PEC_SECURE_WAIT) { if ((s_secureInstallAtMs != 0U) && ((int32_t)(now - s_secureInstallAtMs) >= 0)) { if (!InstallEncryptedPeer()) ResetToDiscovery("@LINK SEC_BAD"); } }
-        else if (s_state == PEC_SECURE) { if ((now - s_lastRxMs) >= PEC_LINK_TIMEOUT_MS) ResetToDiscovery("@LINK LOST"); else (void)SendStreamHeartbeat(now); }
+        else if (s_state == PEC_CONNECTING) { if ((now - s_stateStartMs) > PEC_AUTH_TIMEOUT_MS) ResetToDiscovery(PEC_LINK_CONN_TO); else if ((now - s_lastTxMs) >= PEC_RETRY_MS) { s_lastTxMs = now; (void)SendConnect(); } }
+        else if (s_state == PEC_AUTHING) { if ((now - s_stateStartMs) > PEC_AUTH_TIMEOUT_MS) ResetToDiscovery(PEC_LINK_AUTH_TO); else if ((now - s_lastTxMs) >= PEC_RETRY_MS) { s_lastTxMs = now; (void)SendAuth(); } }
+        else if (s_state == PEC_SECURE_WAIT) { if ((s_secureInstallAtMs != 0U) && ((int32_t)(now - s_secureInstallAtMs) >= 0)) { if (!InstallEncryptedPeer()) ResetToDiscovery(PEC_LINK_SEC_BAD); } }
+        else if (s_state == PEC_SECURE) { if ((now - s_lastRxMs) >= PEC_LINK_TIMEOUT_MS) ResetToDiscovery(PEC_LINK_LOST); else (void)SendStreamHeartbeat(now); }
         vTaskDelayUntil(&last, pdMS_TO_TICKS(50U));
     }
 }
 
-static bool VarIdFromText(const char* text, uint32_t* outVarId) {
-    if ((text == nullptr) || (outVarId == nullptr)) return false;
-    const size_t len = strlen(text); if ((len == 0U) || (len > 4U)) return false;
-    uint8_t b[4] = {0U, 0U, 0U, 0U};
-    for (size_t i = 0; i < len; ++i) { if (!isGraph((unsigned char)text[i])) return false; b[i] = (uint8_t)text[i]; }
-    *outVarId = PEN_VAR_ID4(b[0], b[1], b[2], b[3]); return true;
-}
-
-static bool LooksFloat(const char* text) { return (text != nullptr) && ((strchr(text, '.') != nullptr) || (strchr(text, 'e') != nullptr) || (strchr(text, 'E') != nullptr)); }
-
 } // namespace
 
-bool pec_begin(pec_line_fn_t lineFn, BaseType_t coreId, UBaseType_t priority, uint32_t stackSize) {
+bool pec_begin(pec_rx_event_fn_t rxEventFn, BaseType_t coreId, UBaseType_t priority, uint32_t stackSize) {
     if (s_task != nullptr) return true;
-    s_line = lineFn; memset(s_events, 0, sizeof(s_events)); ClearSessionMaterial();
+    s_rxEvent = rxEventFn; memset(s_events, 0, sizeof(s_events)); ClearSessionMaterial();
     s_state = PEC_DISCOVERY; s_seq = 1U; s_hbCounter = 0U; s_lastTxMs = 0U; s_lastRxMs = 0U; s_stateStartMs = 0U; s_secureInstallAtMs = 0U;
-    s_statusDirty = true; s_connected = false; s_peerRssi = -100; s_localRssi = -100; s_battery = 0U; s_errorCode = PEC_HW_ERR_NONE; s_errorDetail = 0;
+    s_connected = false; s_peerRssi = -100; s_localRssi = -100;
     s_eventDropCount = 0U; s_badFrameCount = 0U; s_reportedEventDropCount = 0U; s_reportedBadFrameCount = 0U;
     return xTaskCreatePinnedToCore(Task, "PEC", stackSize, nullptr, priority, &s_task, coreId) == pdPASS;
 }
 
 bool pec_is_connected(void) { return s_state == PEC_SECURE; }
-
-void pec_get_status(pec_status_t* outStatus) {
-    if (outStatus == nullptr) return;
-    portENTER_CRITICAL(&s_mux);
-    outStatus->connected = s_connected; outStatus->battery = s_battery; outStatus->peerRssi = s_peerRssi; outStatus->localRssi = s_localRssi; outStatus->errorCode = s_errorCode; outStatus->errorDetail = s_errorDetail;
-    portEXIT_CRITICAL(&s_mux);
-}
-
-bool pec_take_status(pec_status_t* outStatus) {
-    if (outStatus == nullptr) return false;
-    bool dirty;
-    portENTER_CRITICAL(&s_mux);
-    dirty = s_statusDirty; outStatus->connected = s_connected; outStatus->battery = s_battery; outStatus->peerRssi = s_peerRssi; outStatus->localRssi = s_localRssi; outStatus->errorCode = s_errorCode; outStatus->errorDetail = s_errorDetail; s_statusDirty = false;
-    portEXIT_CRITICAL(&s_mux);
-    return dirty;
-}
 
 bool pec_send_get_var(uint32_t varId) {
     if (!pec_is_connected()) return false;
@@ -515,15 +499,3 @@ bool pec_send_state_f(uint32_t varId, float value, uint16_t ttlMs) { return Send
 bool pec_send_event_i(uint32_t varId, int32_t value, uint16_t ttlMs) { return SendVarI(MSG_EVENT_I_VAR, varId, value, ttlMs); }
 bool pec_send_event_f(uint32_t varId, float value, uint16_t ttlMs) { return SendVarF(MSG_EVENT_F_VAR, varId, value, ttlMs); }
 
-bool pec_pc_rx_line(const char* line) {
-    if (line == nullptr) return false;
-    char buf[32]; strncpy(buf, line, sizeof(buf) - 1U); buf[sizeof(buf) - 1U] = '\0';
-    char* savePtr = nullptr; char* varText = strtok_r(buf, " \t\r\n", &savePtr); char* valueText = strtok_r(nullptr, " \t\r\n", &savePtr);
-    if ((varText == nullptr) || (valueText == nullptr)) return false;
-    uint32_t varId; if (!VarIdFromText(varText, &varId)) return false;
-    if (strcmp(valueText, "?") == 0) return pec_send_get_var(varId);
-    if (LooksFloat(valueText)) { char* endPtr = nullptr; const float value = strtof(valueText, &endPtr); if ((endPtr == valueText) || (*endPtr != '\0')) return false; return pec_send_state_f(varId, value, 0U); }
-    char* endPtr = nullptr; const long value = strtol(valueText, &endPtr, 10);
-    if ((endPtr == valueText) || (*endPtr != '\0') || (value < INT32_MIN) || (value > INT32_MAX)) return false;
-    return pec_send_state_i(varId, (int32_t)value, 0U);
-}
