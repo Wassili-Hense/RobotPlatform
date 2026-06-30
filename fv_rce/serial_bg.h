@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 
 #ifndef SERIAL_BG_LINE_CAP
-#define SERIAL_BG_LINE_CAP 32U
+#define SERIAL_BG_LINE_CAP 64U
 #endif
 
 #ifndef SERIAL_BG_QUEUE_DEPTH

@@ -74,6 +74,7 @@ static uint32_t s_homeLastActivityMs = 0U;
 static bool s_homePowerOffWarn15Done = false;
 static bool s_homePowerOffWarn5Done = false;
 static bool s_homePowerOffQueued = false;
+static int32_t s_usbConnPec;
 
 // [Log]
 static void HmiLogToSerial(const char* text, bool emergency) {
@@ -241,16 +242,17 @@ static void HandleLinkEvent(const pec_rx_event_t& ev) {
       (void)AppPcTxLine("@LINK AUTH_OK"); 
       break;
     case PEC_LINK_SECURE:
-      (void)AppPcTxLine("@LINK SECURE");
-      hmi_cmd_lcd_set_indicator(0U, true);
       //hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
+      hmi_cmd_lcd_set_indicator(0U, true);
+      (void)AppPcTxLine("@LINK SECURE");
+      s_usbConnPec = -1;  // resend
       break;
     case PEC_LINK_LOST:
-      (void)AppPcTxLine("@LINK LOST");
+      //hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
       hmi_cmd_lcd_set_indicator(0U, false);
       hmi_cmd_lcd_set_progress(0U, 0U);
       hmi_cmd_lcd_set_progress(1U, 0U);
-      //hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+      (void)AppPcTxLine("@LINK LOST");
       break;
     case PEC_LINK_CONN_TO: 
       (void)AppPcTxLine("@LINK CONN_TO"); 
@@ -306,7 +308,6 @@ static void AppPecRxTask(void* arg) {
 }
 
 static void AppProcessPecTx(void) {
-  static bool lastUsbConnected = false;
   static int32_t lset = 0;
   static int32_t rset = 0;
 
@@ -345,10 +346,10 @@ static void AppProcessPecTx(void) {
     }
   }
 
-  const bool usbConnected = serial_bg_is_connected();
-  if (usbConnected != lastUsbConnected) {  // TODO: || ec_just_connected
-    (void)pec_send_state_i(PEC_VAR_USBC, usbConnected ? 1 : 0, 2000U);
-    lastUsbConnected = usbConnected;
+  const int32_t usbConnected = serial_bg_is_connected()?1:0;
+  if (usbConnected != s_usbConnPec) {
+    (void)pec_send_state_i(PEC_VAR_USBC, usbConnected, 0U);
+    s_usbConnPec = usbConnected;
   }
 }
 
@@ -358,9 +359,7 @@ static void AppProcessHomePowerOff(void) {
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 301;
 
-  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY)
-      || (hmi_changed(HMI_DATA_JOY_X) && (hmi_get(HMI_DATA_JOY_X) < s_axisCalX.cMin || hmi_get(HMI_DATA_JOY_X) > s_axisCalX.cMax))
-      || (hmi_changed(HMI_DATA_JOY_Y) && (hmi_get(HMI_DATA_JOY_Y) < s_axisCalY.cMin || hmi_get(HMI_DATA_JOY_Y) > s_axisCalY.cMax))) {
+  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY) || pec_is_connected() || serial_bg_is_connected()) {
     lastActivityMs = now;
     prevRemSec = 301;
     return;
