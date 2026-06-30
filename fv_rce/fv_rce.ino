@@ -124,7 +124,7 @@ static void AppProcessPecUi(void) {
 
   if (prevConnected != st.connected) {
     hmi_cmd_lcd_set_indicator(0U, st.connected);
-    hmi_cmd_play_melody(st.connected ? HMI_MELODY_CONNECTED : HMI_MELODY_DISCONNECTED);
+    //hmi_cmd_play_melody(st.connected ? HMI_MELODY_CONNECTED : HMI_MELODY_DISCONNECTED);
     prevConnected = st.connected;
   }
   if (prevP0 != st.battery) { hmi_cmd_lcd_set_progress(2U, st.battery); prevP0 = st.battery; }
@@ -140,37 +140,22 @@ static void AppProcessPecUi(void) {
 }
 
 static void AppProcessPecTx(void) {
-  static uint32_t lastJoyTxMs = 0U;
-  static uint32_t lastUsbTxMs = 0U;
-  static float lastJoyX = 0.0f;
-  static float lastJoyY = 0.0f;
-  static bool hasJoySample = false;
   static bool lastUsbConnected = false;
   static int32_t lset = 0;
   static int32_t rset = 0;
 
   const uint32_t now = millis();
   if (!pec_is_connected()) {
-    hasJoySample = false;
-    lastJoyTxMs = 0U;
-    lastUsbTxMs = 0U;
     return;
   }
 
-  const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
-  const float joyY = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_Y), s_axisCalY);
-  const bool joyChanged = hmi_changed(HMI_DATA_JOY_X) || hmi_changed(HMI_DATA_JOY_Y) ||
-                          !hasJoySample ||
-                          (fabsf(joyX - lastJoyX) >= 0.0025f) ||
-                          (fabsf(joyY - lastJoyY) >= 0.0025f);
-  const bool joyExpired = !hasJoySample || ((now - lastJoyTxMs) >= 500U);
-  if (joyChanged || joyExpired) {
+  if(hmi_changed(HMI_DATA_JOY_X)){
+    const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
     (void)pec_send_stream_f(PEC_VAR_JX, joyX, 500U);
+  }
+  if(hmi_changed(HMI_DATA_JOY_Y)){
+    const float joyY = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_Y), s_axisCalY);
     (void)pec_send_stream_f(PEC_VAR_JY, joyY, 500U);
-    lastJoyX = joyX;
-    lastJoyY = joyY;
-    lastJoyTxMs = now;
-    hasJoySample = true;
   }
 
   // LUP/LDN/RUP/RDN используются как параметры только на Home.
@@ -195,10 +180,9 @@ static void AppProcessPecTx(void) {
   }
 
   const bool usbConnected = serial_bg_is_connected();
-  if ((usbConnected != lastUsbConnected) || ((now - lastUsbTxMs) >= 2000U)) {
+  if (usbConnected != lastUsbConnected) {  // TODO: || ec_just_connected
     (void)pec_send_state_i(PEC_VAR_USBC, usbConnected ? 1 : 0, 2000U);
     lastUsbConnected = usbConnected;
-    lastUsbTxMs = now;
   }
 }
 
