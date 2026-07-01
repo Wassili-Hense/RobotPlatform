@@ -8,12 +8,10 @@
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "hmi.h"
 #include "gui.h"
 #include "serial_bg.h"
-#include "pec_link.h"
-#include "pen_common.h"
+#include "pen_link.h"
 
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
@@ -61,25 +59,26 @@ static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu
 static GUIComponent* s_sceneCEdgeItems[] = { &s_sceneCEdgeCls, &s_sceneCEdgeJView, &s_sceneCEdgeHotKeyBack, &s_sceneCEdgeHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
 gui_scene_t s_sceneCEdge = GUI_SCENE(s_sceneCEdgeItems);
 
+// [PEN app variable IDs]
+static constexpr uint32_t PEN_VAR_JX_APP   = PEN_VAR_ID2('J', 'X');
+static constexpr uint32_t PEN_VAR_JY_APP   = PEN_VAR_ID2('J', 'Y');
+static constexpr uint32_t PEN_VAR_BATP_APP = PEN_VAR_ID4('B', 'A', 'T', 'P');
+static constexpr uint32_t PEN_VAR_LSET_APP = PEN_VAR_ID4('L', 'S', 'E', 'T');
+static constexpr uint32_t PEN_VAR_RSET_APP = PEN_VAR_ID4('R', 'S', 'E', 'T');
+static constexpr uint32_t PEN_VAR_USBC_APP = PEN_VAR_ID4('U', 'S', 'B', 'C');
 // [App constants]
 static constexpr uint32_t APP_TASK_PERIOD_MS = 5U;
 static constexpr uint32_t APP_HOME_POWER_OFF_TIMEOUT_MS = 5UL * 60UL * 1000UL;
 static constexpr BaseType_t APP_TASK_CORE_ID = 1;
 static constexpr UBaseType_t APP_TASK_PRIORITY = 2;
 static constexpr uint32_t APP_TASK_STACK_SIZE = 4096U;
-static constexpr BaseType_t APP_PEC_RX_TASK_CORE_ID = 1;
-static constexpr UBaseType_t APP_PEC_RX_TASK_PRIORITY = 1;
-static constexpr uint32_t APP_PEC_RX_TASK_STACK_SIZE = 4096U;
-static constexpr size_t APP_PEC_RX_QUEUE_CAP = 16U;
 
 static TaskHandle_t s_appTaskHandle = nullptr;
-static TaskHandle_t s_pecRxTaskHandle = nullptr;
-static QueueHandle_t s_pecRxQueue = nullptr;
 static uint32_t s_homeLastActivityMs = 0U;
 static bool s_homePowerOffWarn15Done = false;
 static bool s_homePowerOffWarn5Done = false;
 static bool s_homePowerOffQueued = false;
-static int32_t s_usbConnPec;
+static int32_t s_usbConnPen;
 
 // [Log]
 static void HmiLogToSerial(const char* text, bool emergency) {
@@ -99,10 +98,6 @@ static bool AppPcTxLine(const char* text) {
   return true;
 }
 
-static bool AppPecRxEnqueue(const pec_rx_event_t* ev) {
-  if ((ev == nullptr) || (s_pecRxQueue == nullptr)) return false;
-  return (xQueueSend(s_pecRxQueue, ev, 0U) == pdTRUE);
-}
 
 static bool VarIdFromText(const char* text, uint32_t* outVarId) {
   if ((text == nullptr) || (outVarId == nullptr)) return false;
@@ -121,7 +116,7 @@ static bool LooksFloat(const char* text) {
   return (text != nullptr) && ((strchr(text, '.') != nullptr) || (strchr(text, 'e') != nullptr) || (strchr(text, 'E') != nullptr));
 }
 
-static bool pec_pc_rx_line(const char* line) {
+static bool pen_pc_rx_line(const char* line) {
   if (line == nullptr) return false;
   char buf[32];
   strncpy(buf, line, sizeof(buf) - 1U);
@@ -134,23 +129,27 @@ static bool pec_pc_rx_line(const char* line) {
 
   uint32_t varId = 0U;
   if (!VarIdFromText(varText, &varId)) return false;
-  if (strcmp(valueText, "?") == 0) return pec_send_get_var(varId);
+  if (strcmp(valueText, "?") == 0) return pen_send_get_var(varId);
 
   if (LooksFloat(valueText)) {
     char* endPtr = nullptr;
     const float value = strtof(valueText, &endPtr);
     if ((endPtr == valueText) || (*endPtr != '\0')) return false;
-    return pec_send_state_f(varId, value, 0U);
+    return pen_send_state(varId, value);
   }
 
   char* endPtr = nullptr;
   const long value = strtol(valueText, &endPtr, 10);
   if ((endPtr == valueText) || (*endPtr != '\0') || (value < INT32_MIN) || (value > INT32_MAX)) return false;
-  return pec_send_state_i(varId, (int32_t)value, 0U);
+  return pen_send_state(varId, (int32_t)value);
 }
 
 static void AppFormatVarName(uint32_t varId, char out[5]) {
-  pen_var_id_to_text(varId, out);
+  out[0] = (char)((varId >> 0) & 0xFFU);
+  out[1] = (char)((varId >> 8) & 0xFFU);
+  out[2] = (char)((varId >> 16) & 0xFFU);
+  out[3] = (char)((varId >> 24) & 0xFFU);
+  out[4] = '\0';
 }
 
 static float AppNormalizeAxis(uint16_t raw, const gui_axis_cal_t& cal) {
@@ -187,32 +186,32 @@ static void AppEmitVarF(uint32_t varId, float value, uint8_t msgType, uint16_t s
   (void)AppPcTxLine(line);
 }
 
-static void HandleVarI(const pec_rx_event_t& ev) {
+static void HandleVarI(const pen_rx_event_t& ev) {
   const uint32_t varId = ev.data.varI.varId;
   const int32_t value = ev.data.varI.value;
   if (varId == PEN_VAR_HB) return;
 
-  if (varId == PEC_VAR_BATP) {
+  if (varId == PEN_VAR_BATP_APP) {
     int32_t v = value;
     if (v < 0) v = 0;
     if (v > 64) v = 64;
     hmi_cmd_lcd_set_progress(2U, (uint8_t)v);
-  } else if (varId == PEC_VAR_RSSI || varId == PEC_VAR_RSSL) {
+  } else if (varId == PEN_VAR_RSSI || varId == PEN_VAR_RSSL) {
     int32_t v = 100 + value;
     if (v < 0) v = 0;
     if (v > 64) v = 64;
-    hmi_cmd_lcd_set_progress(varId == PEC_VAR_RSSI ? 0U : 1U, (int8_t)v);
+    hmi_cmd_lcd_set_progress(varId == PEN_VAR_RSSI ? 0U : 1U, (int8_t)v);
     return;
   }
 
   AppEmitVarI(varId, value, ev.msgType, ev.data.varI.seq);
 }
 
-static void HandleVarF(const pec_rx_event_t& ev) {
+static void HandleVarF(const pen_rx_event_t& ev) {
   AppEmitVarF(ev.data.varF.varId, ev.data.varF.value, ev.msgType, ev.data.varF.seq);
 }
 
-static void HandleAck(const pec_rx_event_t& ev) {
+static void HandleAck(const pen_rx_event_t& ev) {
   char name[5];
   char line[32];
   AppFormatVarName(ev.data.ack.varId, name);
@@ -220,7 +219,7 @@ static void HandleAck(const pec_rx_event_t& ev) {
   (void)AppPcTxLine(line);
 }
 
-static void HandleNack(const pec_rx_event_t& ev) {
+static void HandleNack(const pen_rx_event_t& ev) {
   char name[5];
   char line[32];
   AppFormatVarName(ev.data.nack.varId, name);
@@ -228,50 +227,50 @@ static void HandleNack(const pec_rx_event_t& ev) {
   (void)AppPcTxLine(line);
 }
 
-static void HandleLinkEvent(const pec_rx_event_t& ev) {
+static void HandleLinkEvent(const pen_rx_event_t& ev) {
   switch (ev.data.link.code) {
-    case PEC_LINK_READY: 
+    case PEN_LINK_READY: 
       (void)AppPcTxLine("@LINK READY"); 
       break;
-    case PEC_LINK_DISC:
+    case PEN_LINK_DISC:
       {
         char line[32];
         snprintf(line, sizeof(line), "@DISC %d", (int)ev.data.link.rssi);
         (void)AppPcTxLine(line);
         break;
       }
-    case PEC_LINK_CONNECTED: 
+    case PEN_LINK_CONNECTED: 
       (void)AppPcTxLine("@LINK CONNECTED"); 
       break;
-    case PEC_LINK_AUTH_OK: 
+    case PEN_LINK_AUTH_OK: 
       (void)AppPcTxLine("@LINK AUTH_OK"); 
       break;
-    case PEC_LINK_SECURE:
-      //hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
+    case PEN_LINK_SECURE:
+      hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
       hmi_cmd_lcd_set_indicator(0U, true);
       (void)AppPcTxLine("@LINK SECURE");
-      s_usbConnPec = -1;  // resend
+      s_usbConnPen = -1;  // resend
       break;
-    case PEC_LINK_LOST:
-      //hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+    case PEN_LINK_LOST:
+      hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
       hmi_cmd_lcd_set_indicator(0U, false);
       hmi_cmd_lcd_set_progress(0U, 0U);
       hmi_cmd_lcd_set_progress(1U, 0U);
       (void)AppPcTxLine("@LINK LOST");
       break;
-    case PEC_LINK_CONN_TO: 
+    case PEN_LINK_CONN_TO: 
       (void)AppPcTxLine("@LINK CONN_TO"); 
       break;
-    case PEC_LINK_AUTH_TO: 
+    case PEN_LINK_AUTH_TO: 
       (void)AppPcTxLine("@LINK AUTH_TO"); 
       break;
-    case PEC_LINK_MAC_BAD: 
+    case PEN_LINK_MAC_BAD: 
       (void)AppPcTxLine("@LINK MAC_BAD"); 
       break;
-    case PEC_LINK_AUTH_BAD: 
+    case PEN_LINK_AUTH_BAD: 
       (void)AppPcTxLine("@LINK AUTH_BAD"); 
       break;
-    case PEC_LINK_SEC_BAD: 
+    case PEN_LINK_SEC_BAD: 
       (void)AppPcTxLine("@LINK SEC_BAD"); 
       break;
     default: 
@@ -279,51 +278,47 @@ static void HandleLinkEvent(const pec_rx_event_t& ev) {
   }
 }
 
-static void HandleErrorEvent(const pec_rx_event_t& ev) {
+static void HandleErrorEvent(const pen_rx_event_t& ev) {
   char line[32];
   snprintf(line, sizeof(line), "@ERR %u %ld", (unsigned)ev.data.error.code, (long)ev.data.error.detail);
   (void)AppPcTxLine(line);
-  if (ev.data.error.code != PEC_HW_ERR_NONE) {
+  if (ev.data.error.code != PEN_HW_ERR_NONE) {
     char errText[8];
     snprintf(errText, sizeof(errText), "E%u", (unsigned)ev.data.error.code);
     hmi_cmd_lcd_draw_text(0U, 0U, GUI_COLOR_ORANGE, errText);
   }
 }
 
-static void AppProcessPecRxEvent(const pec_rx_event_t& ev) {
+static void AppProcessPenRxEvent(const pen_rx_event_t& ev) {
   switch (ev.type) {
-    case PEC_RX_LINK: HandleLinkEvent(ev); break;
-    case PEC_RX_ERROR: HandleErrorEvent(ev); break;
-    case PEC_RX_VAR_I: HandleVarI(ev); break;
-    case PEC_RX_VAR_F: HandleVarF(ev); break;
-    case PEC_RX_ACK: HandleAck(ev); break;
-    case PEC_RX_NACK: HandleNack(ev); break;
+    case PEN_RX_LINK: HandleLinkEvent(ev); break;
+    case PEN_RX_ERROR: HandleErrorEvent(ev); break;
+    case PEN_RX_VAR_I: HandleVarI(ev); break;
+    case PEN_RX_VAR_F: HandleVarF(ev); break;
+    case PEN_RX_ACK: HandleAck(ev); break;
+    case PEN_RX_NACK: HandleNack(ev); break;
     default: break;
   }
 }
 
-static void AppPecRxTask(void* arg) {
-  (void)arg;
-  pec_rx_event_t ev = {};
-  for (;;) {
-    if ((s_pecRxQueue != nullptr) && (xQueueReceive(s_pecRxQueue, &ev, portMAX_DELAY) == pdTRUE)) {
-      AppProcessPecRxEvent(ev);
-    }
-  }
+static bool AppPenRxEvent(const pen_rx_event_t* ev) {
+  if (ev == nullptr) return false;
+  AppProcessPenRxEvent(*ev);
+  return true;
 }
 
-static void AppProcessPecTx(void) {
-  if (!pec_is_connected()) {
+static void AppProcessPenTx(void) {
+  if (!pen_is_connected()) {
     return;
   }
 
   if (hmi_changed(HMI_DATA_JOY_X)) {
     const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
-    (void)pec_send_stream_f(PEC_VAR_JX, joyX, 500U);
+    (void)pen_send_stream(PEN_VAR_JX_APP, joyX, 500U);
   }
   if (hmi_changed(HMI_DATA_JOY_Y)) {
     const float joyY = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_Y), s_axisCalY);
-    (void)pec_send_stream_f(PEC_VAR_JY, joyY, 500U);
+    (void)pen_send_stream(PEN_VAR_JY_APP, joyY, 500U);
   }
 
   // LUP/LDN/RUP/RDN используются как параметры только на Home.
@@ -331,26 +326,26 @@ static void AppProcessPecTx(void) {
   if (GUIGetActiveScene() == &s_sceneHome) {
     if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U)) {
       ++s_lset;
-      (void)pec_send_state_i(PEC_VAR_LSET, s_lset, 0U);
+      (void)pen_send_state(PEN_VAR_LSET_APP, s_lset);
     }
     if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U)) {
       --s_lset;
-      (void)pec_send_state_i(PEC_VAR_LSET, s_lset, 0U);
+      (void)pen_send_state(PEN_VAR_LSET_APP, s_lset);
     }
     if (hmi_changed(HMI_DATA_BTN_RUP) && (hmi_get(HMI_DATA_BTN_RUP) != 0U)) {
       ++s_rset;
-      (void)pec_send_state_i(PEC_VAR_RSET, s_rset, 0U);
+      (void)pen_send_state(PEN_VAR_RSET_APP, s_rset);
     }
     if (hmi_changed(HMI_DATA_BTN_RDN) && (hmi_get(HMI_DATA_BTN_RDN) != 0U)) {
       --s_rset;
-      (void)pec_send_state_i(PEC_VAR_RSET, s_rset, 0U);
+      (void)pen_send_state(PEN_VAR_RSET_APP, s_rset);
     }
   }
 
   const int32_t usbConnected = serial_bg_is_connected()?1:0;
-  if (usbConnected != s_usbConnPec) {
-    (void)pec_send_state_i(PEC_VAR_USBC, usbConnected, 0U);
-    s_usbConnPec = usbConnected;
+  if (usbConnected != s_usbConnPen) {
+    (void)pen_send_state(PEN_VAR_USBC_APP, usbConnected);
+    s_usbConnPen = usbConnected;
   }
 }
 
@@ -360,7 +355,7 @@ static void AppProcessHomePowerOff(void) {
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 301;
 
-  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY) || pec_is_connected() || serial_bg_is_connected()) {
+  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY) || pen_is_connected() || serial_bg_is_connected()) {
     lastActivityMs = now;
     prevRemSec = 301;
     return;
@@ -391,10 +386,10 @@ static void AppTask(void* arg) {
         const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
         serial_bg_set_connected(connected);
         hmi_cmd_lcd_set_indicator(1U, connected);
-        (void)pec_send_state_i(PEC_VAR_USBC, connected ? 1 : 0, 2000U);
+        (void)pen_send_state(PEN_VAR_USBC_APP, connected ? 1L : 0L);
       }
       AppProcessHomePowerOff();
-      AppProcessPecTx();
+      AppProcessPenTx();
       //GUI
       if (!GUIServiceActiveScene()) {
         hmi_sysSend();
@@ -404,7 +399,7 @@ static void AppTask(void* arg) {
         char line[SERIAL_BG_LINE_CAP];
 
         if (serial_bg_receive_line(line, sizeof(line))) {
-          (void)pec_pc_rx_line(line);
+          (void)pen_pc_rx_line(line);
         }
       }
     }
@@ -415,11 +410,9 @@ static void AppTask(void* arg) {
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
-  s_pecRxQueue = xQueueCreate(APP_PEC_RX_QUEUE_CAP, sizeof(pec_rx_event_t));
-  (void)pec_begin(AppPecRxEnqueue, 1, 2, 4096U);
-  (void)xTaskCreatePinnedToCore(AppPecRxTask, "PecRx", APP_PEC_RX_TASK_STACK_SIZE, nullptr, APP_PEC_RX_TASK_PRIORITY, &s_pecRxTaskHandle, APP_PEC_RX_TASK_CORE_ID);
-  //hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
-  hmi_cmd_play_tone(200, 50);
+  (void)pen_begin(AppPenRxEvent);
+  hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
+  //hmi_cmd_play_tone(200, 50);
   GUISetHomeScene(&s_sceneHome);
   GUISwitchScene(&s_sceneHome);
   (void)xTaskCreatePinnedToCore(AppTask, "AppTask", 4096U, nullptr, 2, &s_appTaskHandle, 1);
