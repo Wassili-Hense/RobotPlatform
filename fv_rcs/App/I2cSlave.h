@@ -8,12 +8,14 @@
 extern "C" {
 #endif
 
-typedef uint8_t (*I2cSlave_RequestCallback_t)(uint8_t *outData);
-typedef void (*I2cSlave_ReceiveCallback_t)(uint8_t *data, uint16_t size);
+#define I2C_SLAVE_RX_SIZE  32U
+#define I2C_SLAVE_TX_SIZE  32U
 
-void I2cSlave_Init(I2C_HandleTypeDef *hi2c,
-                   I2cSlave_RequestCallback_t requestCallback,
-                   I2cSlave_ReceiveCallback_t receiveCallback);
+typedef uint8_t (*I2cSlave_RequestCallback_t)(uint8_t *outData);
+
+void I2cSlave_Init(I2C_HandleTypeDef *hi2c, I2cSlave_RequestCallback_t requestCallback);
+uint8_t I2cSlave_GetNextRxPacket(uint8_t *data, uint8_t *size);
+uint8_t I2cSlave_GetRxQueueOverflow(void);
 
 #ifdef __cplusplus
 }

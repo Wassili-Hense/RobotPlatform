@@ -117,8 +117,12 @@ static uint8_t App_I2cRequestCallback(uint8_t *outData) {
   return APP_I2C_PACKET_SIZE;
 }
 
-static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
-  if ((data == 0) || (size == 0U)) return;
+//static void App_I2cOnReceive(uint8_t *data, uint16_t size) {
+static void App_ProcessI2cRx(void) {
+  uint8_t data[I2C_SLAVE_RX_SIZE];
+  uint8_t size;
+
+  if (I2cSlave_GetNextRxPacket(data, &size) == 0U || size == 0U) return;
 
   switch (data[0]) {
   case APP_RX_CMD_TONE:
@@ -414,12 +418,13 @@ void App_Init(void) {
   (void) App_DrawIndicator(1U);
 
   (void) Inp_AdcEnsureStarted();
-  I2cSlave_Init(&hi2c1, App_I2cRequestCallback, App_I2cOnReceive);
+  I2cSlave_Init(&hi2c1, App_I2cRequestCallback);
 
   LCD_SetBacklightTimeout(5000U);
   Tone(757U, 45U);
   while (Inp_DiGet(0U) != 0U) {
     App_ProcessTone();
+    App_ProcessI2cRx();
     (void) LCD_Process();
     __WFI();
   }
@@ -446,6 +451,7 @@ void App_Run(void) {
     App_ProcessAdc();
     App_ProcessPower();
   }
+  App_ProcessI2cRx();
   if ((LCD_Process() == 0U) && (HAL_GetTick() == s_lastAppTick)) {
     __WFI();
   }
