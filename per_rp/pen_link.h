@@ -52,7 +52,6 @@ struct pen_rx_event_t {
 
 typedef bool (*pen_rx_event_fn_t)(const pen_rx_event_t* ev);
 
-static constexpr uint32_t PEN_VAR_HB = PEN_VAR_ID2('H', 'B');
 static constexpr uint32_t PEN_VAR_RSSI = PEN_VAR_ID4('R', 'S', 'S', 'I');
 #if PEN_RC
 static constexpr uint32_t PEN_VAR_RSSL = PEN_VAR_ID4('R', 'S', 'S', 'L');

@@ -189,7 +189,6 @@ static void AppEmitVarF(uint32_t varId, float value, uint8_t msgType, uint16_t s
 static void HandleVarI(const pen_rx_event_t& ev) {
   const uint32_t varId = ev.data.varI.varId;
   const int32_t value = ev.data.varI.value;
-  if (varId == PEN_VAR_HB) return;
 
   if (varId == PEN_VAR_BATP_APP) {
     int32_t v = value;

@@ -125,7 +125,7 @@ static bool PenRxEvent(const pen_rx_event_t* ev) {
       HandleErrorEvent(*ev);
       break;
     case PEN_RX_VAR_I:
-      if (ev->data.varI.varId != PEN_VAR_HB) SerialPrintVarI(ev->data.varI.varId, ev->data.varI.value, ev->msgType, ev->data.varI.seq);
+      SerialPrintVarI(ev->data.varI.varId, ev->data.varI.value, ev->msgType, ev->data.varI.seq);
       break;
     case PEN_RX_VAR_F:
       SerialPrintVarF(ev->data.varF.varId, ev->data.varF.value, ev->msgType, ev->data.varF.seq);
