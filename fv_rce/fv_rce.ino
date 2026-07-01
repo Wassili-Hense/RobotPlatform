@@ -19,6 +19,9 @@ static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
 
 // [gui]
+static int32_t s_lset = 0;
+static int32_t s_rset = 0;
+
 extern gui_scene_t s_sceneHome;
 extern gui_scene_t s_sceneMainMenu;
 extern gui_scene_t s_sceneCCentr;
@@ -26,16 +29,18 @@ extern gui_scene_t s_sceneCEdge;
 
 static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK, false);
 static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY);
+static GUIVarComponent s_sceneHomeLSet(5U, 40U, GUI_COLOR_WHITE, &s_lset);
+static GUIVarComponent s_sceneHomeRSet(120U, 40U, GUI_COLOR_WHITE, &s_rset);
 static GUIBrightnessComponent s_sceneHomeBrightness(0U, 0U, 0U);
 static GUIHotKeyComponent s_sceneHomeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
-static GUIComponent* s_sceneHomeItems[] = { &s_sceneHomeCls, &s_sceneHomeJView, &s_sceneHomeBrightness, &s_sceneHomeHotKeyOk };
+static GUIComponent* s_sceneHomeItems[] = { &s_sceneHomeCls, &s_sceneHomeJView, &s_sceneHomeLSet, &s_sceneHomeRSet, &s_sceneHomeBrightness, &s_sceneHomeHotKeyOk };
 gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
 static GUIClsComponent s_sceneMainMenuCls(GUI_COLOR_BLACK, true);
 static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_GRAY, "Main menu");
 static GUIBrightnessComponent s_sceneMainMenuBrightness(1U, 118U, 10U);
-static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(10U, 25U, "Cal. center", &s_sceneCCentr);
-static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(10U, 40U, "Cal. edge", &s_sceneCEdge);
+static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(5U, 25U, "Cal. center", &s_sceneCCentr);
+static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(5U, 40U, "Cal. edge", &s_sceneCEdge);
 static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneHome);
 static GUIComponent* s_sceneMainMenuItems[] = { &s_sceneMainMenuCls, &s_sceneMainMenuTitle, &s_sceneMainMenuBrightness, &s_sceneMainMenuItemCalCenter, &s_sceneMainMenuItemCalEdge, &s_sceneMainMenuHotKeyBack };
 gui_scene_t s_sceneMainMenu = GUI_SCENE(s_sceneMainMenuItems);
@@ -44,8 +49,8 @@ static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK, true);
 static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY);
 static GUIHotKeyComponent s_sceneCCentrHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
 static GUIHotKeyComponent s_sceneCCentrHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
-static GUILabelComponent s_sceneCalibrateBack(16U, 10U, GUI_COLOR_ORANGE, "D\n\nR\n\nO\n\nP");
-static GUILabelComponent s_sceneCalibrateOk(126U, 10U, GUI_COLOR_GREEN, "S\n\nA\n\nV\n\nE");
+static GUILabelComponent s_sceneCalibrateBack(30U, 18U, GUI_COLOR_ORANGE, "D\nR\nO\nP");
+static GUILabelComponent s_sceneCalibrateOk(120U, 18U, GUI_COLOR_GREEN, "S\nA\nV\nE");
 static GUIComponent* s_sceneCCentrItems[] = { &s_sceneCCentrCls, &s_sceneCCentrJView, &s_sceneCCentrHotKeyBack, &s_sceneCCentrHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
 gui_scene_t s_sceneCCentr = GUI_SCENE(s_sceneCCentrItems);
 
@@ -308,10 +313,6 @@ static void AppPecRxTask(void* arg) {
 }
 
 static void AppProcessPecTx(void) {
-  static int32_t lset = 0;
-  static int32_t rset = 0;
-
-  const uint32_t now = millis();
   if (!pec_is_connected()) {
     return;
   }
@@ -329,20 +330,20 @@ static void AppProcessPecTx(void) {
   // В меню (GUIGetActiveScene() != &s_sceneHome) эти кнопки остаются за GUI.
   if (GUIGetActiveScene() == &s_sceneHome) {
     if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U)) {
-      ++lset;
-      (void)pec_send_state_i(PEC_VAR_LSET, lset, 0U);
+      ++s_lset;
+      (void)pec_send_state_i(PEC_VAR_LSET, s_lset, 0U);
     }
     if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U)) {
-      --lset;
-      (void)pec_send_state_i(PEC_VAR_LSET, lset, 0U);
+      --s_lset;
+      (void)pec_send_state_i(PEC_VAR_LSET, s_lset, 0U);
     }
     if (hmi_changed(HMI_DATA_BTN_RUP) && (hmi_get(HMI_DATA_BTN_RUP) != 0U)) {
-      ++rset;
-      (void)pec_send_state_i(PEC_VAR_RSET, rset, 0U);
+      ++s_rset;
+      (void)pec_send_state_i(PEC_VAR_RSET, s_rset, 0U);
     }
     if (hmi_changed(HMI_DATA_BTN_RDN) && (hmi_get(HMI_DATA_BTN_RDN) != 0U)) {
-      --rset;
-      (void)pec_send_state_i(PEC_VAR_RSET, rset, 0U);
+      --s_rset;
+      (void)pec_send_state_i(PEC_VAR_RSET, s_rset, 0U);
     }
   }
 

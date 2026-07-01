@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace {
 enum gui_class_id_t : uint8_t {
@@ -10,6 +11,7 @@ enum gui_class_id_t : uint8_t {
     GUI_CLASS_J_VIEW,
     GUI_CLASS_HOT_KEY,
     GUI_CLASS_LABEL,
+    GUI_CLASS_VAR,
     GUI_CLASS_MENU_ITEM,
     GUI_CLASS_BRIGHTNESS
 };
@@ -445,6 +447,148 @@ bool GUILabelComponent::Send(void) {
 
 void GUILabelComponent::Exit(void) {
     m_pending = false;
+}
+
+// -----------------------------------------------------------------------------
+// Section: GUIVarComponent
+// -----------------------------------------------------------------------------
+uint8_t GUIVarComponent::GetClassId(void) const {
+    return (uint8_t)GUI_CLASS_VAR;
+}
+
+GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int32_t* value)
+  : m_x(x),
+    m_y(y),
+    m_color(color),
+    m_type(VALUE_INT32),
+    m_value(value),
+    m_hasDrawn(false),
+    m_phase(PHASE_IDLE) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+}
+
+GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const float* value)
+  : m_x(x),
+    m_y(y),
+    m_color(color),
+    m_type(VALUE_FLOAT),
+    m_value(value),
+    m_hasDrawn(false),
+    m_phase(PHASE_IDLE) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+}
+
+GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* value)
+  : m_x(x),
+    m_y(y),
+    m_color(color),
+    m_type(VALUE_CSTR),
+    m_value(value),
+    m_hasDrawn(false),
+    m_phase(PHASE_IDLE) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+}
+
+GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* const* value)
+  : m_x(x),
+    m_y(y),
+    m_color(color),
+    m_type(VALUE_CSTR_PTR),
+    m_value(value),
+    m_hasDrawn(false),
+    m_phase(PHASE_IDLE) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+}
+
+GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* const* value)
+  : m_x(x),
+    m_y(y),
+    m_color(color),
+    m_type(VALUE_CSTR_PTR),
+    m_value(value),
+    m_hasDrawn(false),
+    m_phase(PHASE_IDLE) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+}
+
+void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
+    if ((out == nullptr) || (outSize == 0U)) return;
+    out[0] = '\0';
+    if (m_value == nullptr) return;
+
+    switch (m_type) {
+        case VALUE_INT32:
+            (void)snprintf(out, outSize, "%ld", (long)(*static_cast<const int32_t*>(m_value)));
+            break;
+        case VALUE_FLOAT:
+            (void)snprintf(out, outSize, "%.2f", (double)(*static_cast<const float*>(m_value)));
+            break;
+        case VALUE_CSTR:
+            (void)snprintf(out, outSize, "%s", static_cast<const char*>(m_value));
+            break;
+        case VALUE_CSTR_PTR:
+        {
+            const char* const* textPtr = static_cast<const char* const*>(m_value);
+            const char* text = (textPtr != nullptr) ? *textPtr : nullptr;
+            (void)snprintf(out, outSize, "%s", (text != nullptr) ? text : "");
+            break;
+        }
+        default:
+            break;
+    }
+    out[outSize - 1U] = '\0';
+}
+
+void GUIVarComponent::Enter(void) {
+    m_drawnText[0] = '\0';
+    m_nextText[0] = '\0';
+    m_hasDrawn = false;
+    m_phase = PHASE_DRAW;
+}
+
+void GUIVarComponent::Process(void) {
+    if (m_phase != PHASE_IDLE) return;
+
+    char text[sizeof(m_nextText)];
+    FormatValue(text, sizeof(text));
+    if (!m_hasDrawn || (strcmp(text, m_drawnText) != 0)) {
+        (void)snprintf(m_nextText, sizeof(m_nextText), "%s", text);
+        m_nextText[sizeof(m_nextText) - 1U] = '\0';
+        m_phase = m_hasDrawn ? PHASE_ERASE : PHASE_DRAW;
+    }
+}
+
+bool GUIVarComponent::Send(void) {
+    if ((m_phase == PHASE_IDLE) || !GUIIsLcdReady()) return false;
+
+    if (m_phase == PHASE_ERASE) {
+        const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, GUI_COLOR_BLACK, m_drawnText);
+        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
+            m_phase = PHASE_DRAW;
+        }
+        return true;
+    }
+
+    if (!m_hasDrawn && (m_nextText[0] == '\0')) {
+        FormatValue(m_nextText, sizeof(m_nextText));
+    }
+    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, m_color, m_nextText);
+    if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
+        (void)snprintf(m_drawnText, sizeof(m_drawnText), "%s", m_nextText);
+        m_drawnText[sizeof(m_drawnText) - 1U] = '\0';
+        m_hasDrawn = true;
+        m_phase = PHASE_IDLE;
+    }
+    return true;
+}
+
+void GUIVarComponent::Exit(void) {
+    m_phase = PHASE_IDLE;
 }
 
 // -----------------------------------------------------------------------------

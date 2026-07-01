@@ -21,6 +21,7 @@ class GUIClsComponent;
 class GUIJViewComponent;
 class GUIHotKeyComponent;
 class GUILabelComponent;
+class GUIVarComponent;
 class GUIMenuItemComponent;
 class GUIBrightnessComponent;
 
@@ -180,6 +181,48 @@ private:
     uint16_t m_color;
     const char* m_text;
     bool m_pending;
+};
+
+// -----------------------------------------------------------------------------
+// Section: GUIVarComponent
+// -----------------------------------------------------------------------------
+class GUIVarComponent : public GUIComponent {
+public:
+    GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int32_t* value);
+    GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const float* value);
+    GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* value);
+    GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* const* value);
+    GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* const* value);
+
+    uint8_t GetClassId(void) const override;
+    void Enter(void) override;
+    void Process(void) override;
+    bool Send(void) override;
+    void Exit(void) override;
+private:
+    enum value_type_t : uint8_t {
+        VALUE_INT32,
+        VALUE_FLOAT,
+        VALUE_CSTR,
+        VALUE_CSTR_PTR
+    };
+    enum phase_t : uint8_t {
+        PHASE_IDLE,
+        PHASE_ERASE,
+        PHASE_DRAW
+    };
+
+    void FormatValue(char* out, size_t outSize) const;
+
+    uint8_t m_x;
+    uint8_t m_y;
+    uint16_t m_color;
+    value_type_t m_type;
+    const void* m_value;
+    char m_drawnText[24];
+    char m_nextText[24];
+    bool m_hasDrawn;
+    phase_t m_phase;
 };
 
 // -----------------------------------------------------------------------------

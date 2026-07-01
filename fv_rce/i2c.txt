@@ -102,6 +102,6 @@ Multibyte parameters are little-endian.
     - 0 - RSSI RP
     - 1 - RSSI RC
     - 2 - Batt RP
-  - value: 0..70
+  - value: 0..64
   - format: [0x21][index][value]
   - LCD service time in slave: about 4.760 ms

@@ -1,2 +1,1 @@
-﻿fv_rcs - теряются CMD_BACKLIGHT_BRIGHTNESS, CMD_MELODY.
-fv_rce - добавить gui_ro_variable
+﻿
