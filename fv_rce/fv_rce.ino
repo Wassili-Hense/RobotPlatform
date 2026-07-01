@@ -198,10 +198,10 @@ static void HandleVarI(const pec_rx_event_t& ev) {
     if (v > 64) v = 64;
     hmi_cmd_lcd_set_progress(2U, (uint8_t)v);
   } else if (varId == PEC_VAR_RSSI || varId == PEC_VAR_RSSL) {
-    int32_t v = 100 - value;
+    int32_t v = 100 + value;
     if (v < 0) v = 0;
-    if (v > 64) v = 0;
-    hmi_cmd_lcd_set_progress(varId == PEC_VAR_RSSI ? 0U : 1U, pen_rssi_to_progress((int8_t)v));
+    if (v > 64) v = 64;
+    hmi_cmd_lcd_set_progress(varId == PEC_VAR_RSSI ? 0U : 1U, (int8_t)v);
     return;
   }
 

@@ -339,6 +339,7 @@ void setup() {
   s_deviceId = pen_make_id_from_efuse();
   (void)esp_wifi_set_promiscuous(true);
   (void)esp_wifi_set_channel(PEN_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_1M_L);
   (void)esp_wifi_set_promiscuous(false);
   (void)esp_now_init();
   (void)esp_now_register_recv_cb(OnRecv);

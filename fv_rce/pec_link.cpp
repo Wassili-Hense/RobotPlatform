@@ -588,6 +588,7 @@ static void Task(void*) {
   }
   if (esp_wifi_set_promiscuous(true) != ESP_OK) EmitError(PEC_HW_ERR_WIFI, 2);
   if (esp_wifi_set_channel(PEN_CHANNEL, WIFI_SECOND_CHAN_NONE) != ESP_OK) EmitError(PEC_HW_ERR_WIFI, 3);
+  if (esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_1M_L) != ESP_OK) EmitError(PEC_HW_ERR_WIFI, 3);
   if (esp_wifi_set_promiscuous(false) != ESP_OK) EmitError(PEC_HW_ERR_WIFI, 4);
   if (esp_now_init() != ESP_OK) {
     EmitError(PEC_HW_ERR_ESPNOW, 1);

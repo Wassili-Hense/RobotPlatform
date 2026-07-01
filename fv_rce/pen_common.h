@@ -123,9 +123,3 @@ static inline bool pen_send_empty_frame(const uint8_t mac[6], uint8_t msgType, u
     if (!pen_finalize_frame(&frame, sizeof(frame))) return false;
     return esp_now_send(mac, reinterpret_cast<const uint8_t*>(&frame), sizeof(frame)) == ESP_OK;
 }
-
-static inline uint8_t pen_rssi_to_progress(int8_t rssi) {
-    if (rssi <= -100) return 0U;
-    if (rssi >= -30) return 70U;
-    return (uint8_t)((int32_t)(rssi + 100) * 70 / 70);
-}
