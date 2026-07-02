@@ -73,7 +73,9 @@ static bool s_sysPowerOff = false;
 static hmi_sys_u8_t s_sysBrightness = { 0U, false };
 static hmi_sys_bl_timeout_t s_sysBlTimeout = { 0U, false };
 static hmi_sys_u8_t s_sysIndicator[2] = { { 0U, false }, { 0U, false } };
-static hmi_sys_u8_t s_sysProgress[3] = { { 0U, false }, { 0U, false }, { 0U, false } };
+static hmi_sys_u8_t s_sysProgress[3] = { { 255U, false }, { 255U, false }, { 255U, false } };
+static uint32_t s_progressLastTxMs[2] = { 0U, 0U };
+static constexpr uint32_t PROGRESS_MIN_PERIOD_MS = 1000U;
 
 static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
   return (data & ~(1UL << idx)) | (((uint32_t)(value & 1U)) << idx);
@@ -234,8 +236,9 @@ static hmi_sys_cmd_type_t FindNextSysCmd(void) {
   if (s_sysBlTimeout.hasData) return HMI_SYS_CMD_BL_TIMEOUT;
   if (s_sysIndicator[0].hasData) return HMI_SYS_CMD_INDICATOR0;
   if (s_sysIndicator[1].hasData) return HMI_SYS_CMD_INDICATOR1;
-  if (s_sysProgress[0].hasData) return HMI_SYS_CMD_PROGRESS0;
-  if (s_sysProgress[1].hasData) return HMI_SYS_CMD_PROGRESS1;
+  const uint32_t now = millis();
+  if (s_sysProgress[0].hasData && ((now - s_progressLastTxMs[0]) >= PROGRESS_MIN_PERIOD_MS)) return HMI_SYS_CMD_PROGRESS0;
+  if (s_sysProgress[1].hasData && ((now - s_progressLastTxMs[1]) >= PROGRESS_MIN_PERIOD_MS)) return HMI_SYS_CMD_PROGRESS1;
   if (s_sysProgress[2].hasData) return HMI_SYS_CMD_PROGRESS2;
   if (s_sysPowerOff) return HMI_SYS_CMD_POWER_OFF;
   return HMI_SYS_CMD_COUNT;
@@ -266,9 +269,11 @@ static void ClearSysCmd(hmi_sys_cmd_type_t type) {
       break;
     case HMI_SYS_CMD_PROGRESS0:
       s_sysProgress[0].hasData = false;
+      s_progressLastTxMs[0] = millis();
       break;
     case HMI_SYS_CMD_PROGRESS1:
       s_sysProgress[1].hasData = false;
+      s_progressLastTxMs[1] = millis();
       break;
     case HMI_SYS_CMD_PROGRESS2:
       s_sysProgress[2].hasData = false;
@@ -286,17 +291,6 @@ void hmi_init(hmi_log_callback_t log_callback) {
   s_joyX = 0U;
   s_joyY = 0U;
   s_logCallback = log_callback;
-
-  s_sysBeep = { 0U, 0U, false };
-  s_sysMelody = { 0U, false };
-  s_sysPowerOff = false;
-  s_sysBrightness = { 0U, false };
-  s_sysBlTimeout = { 0U, false };
-  s_sysIndicator[0] = { 0U, false };
-  s_sysIndicator[1] = { 0U, false };
-  s_sysProgress[0] = { 0U, false };
-  s_sysProgress[1] = { 0U, false };
-  s_sysProgress[2] = { 0U, false };
 
   if (!Wire.begin(I2C_SDA, I2C_SCL)) {
     LogError("hmi_init", "WIRE_BEGIN");
@@ -548,7 +542,7 @@ void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value) {
     LogError("hmi_cmd_lcd_set_progress", "NOT_INITIALIZED");
     return;
   }
-  if(s_sysProgress[index].value != value || value == 0){
+  if(s_sysProgress[index].value != value){
     s_sysProgress[index].value = value;
     s_sysProgress[index].hasData = true;
   }

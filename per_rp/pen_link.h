@@ -42,11 +42,11 @@ struct pen_rx_event_t {
     union {
         struct { uint8_t code; int8_t rssi; } link;
         struct { uint8_t code; int32_t detail; } error;
-        struct { uint16_t seq; uint16_t ttlMs; uint32_t varId; int32_t value; } varI;
-        struct { uint16_t seq; uint16_t ttlMs; uint32_t varId; float value; } varF;
-        struct { uint16_t seq; uint16_t ackSeq; uint32_t varId; } ack;
-        struct { uint16_t seq; uint16_t ackSeq; uint32_t varId; uint8_t reason; } nack;
-        struct { uint16_t seq; uint32_t varId; } getVar;
+        struct { uint32_t varId; int32_t value; bool retry; } varI;
+        struct { uint32_t varId; float value; bool retry; } varF;
+        struct { uint32_t varId; } ack;
+        struct { uint32_t varId; uint8_t reason; } nack;
+        struct { uint32_t varId; } getVar;
     } data;
 };
 
@@ -66,5 +66,5 @@ bool pen_send_stream(uint32_t varId, int32_t value, uint16_t ttlMs);
 bool pen_send_stream(uint32_t varId, float value, uint16_t ttlMs);
 bool pen_send_state(uint32_t varId, int32_t value);
 bool pen_send_state(uint32_t varId, float value);
-bool pen_send_event(uint32_t varId, int32_t value, uint16_t ttlMs);
-bool pen_send_event(uint32_t varId, float value, uint16_t ttlMs);
+bool pen_send_event(uint32_t varId, int32_t value);
+bool pen_send_event(uint32_t varId, float value);

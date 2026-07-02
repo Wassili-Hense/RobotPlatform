@@ -13,6 +13,8 @@
 #include "serial_bg.h"
 #include "pen_link.h"
 
+#define MELODY 1
+
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
 
@@ -170,25 +172,27 @@ static float AppNormalizeAxis(uint16_t raw, const gui_axis_cal_t& cal) {
   return value;
 }
 
-static void AppEmitVarI(uint32_t varId, int32_t value, uint8_t msgType, uint16_t seq) {
+static void AppEmitVarI(uint32_t varId, int32_t value) {
   char name[5];
   char line[32];
   AppFormatVarName(varId, name);
-  snprintf(line, sizeof(line), "%s %ld I %u %u", name, (long)value, (unsigned)msgType, (unsigned)seq);
+  snprintf(line, sizeof(line), "%s %ld", name, (long)value);
   (void)AppPcTxLine(line);
 }
 
-static void AppEmitVarF(uint32_t varId, float value, uint8_t msgType, uint16_t seq) {
+static void AppEmitVarF(uint32_t varId, float value) {
   char name[5];
   char line[32];
   AppFormatVarName(varId, name);
-  snprintf(line, sizeof(line), "%s %.4f F %u %u", name, (double)value, (unsigned)msgType, (unsigned)seq);
+  snprintf(line, sizeof(line), "%s %.4f", name, (double)value);
   (void)AppPcTxLine(line);
 }
 
 static void HandleVarI(const pen_rx_event_t& ev) {
   const uint32_t varId = ev.data.varI.varId;
   const int32_t value = ev.data.varI.value;
+  const bool retry = ev.data.varI.retry;
+  if (retry && (varId != PEN_VAR_RSSI) && (varId != PEN_VAR_RSSL)) return;
 
   if (varId == PEN_VAR_BATP_APP) {
     int32_t v = value;
@@ -203,18 +207,19 @@ static void HandleVarI(const pen_rx_event_t& ev) {
     return;
   }
 
-  AppEmitVarI(varId, value, ev.msgType, ev.data.varI.seq);
+  AppEmitVarI(varId, value);
 }
 
 static void HandleVarF(const pen_rx_event_t& ev) {
-  AppEmitVarF(ev.data.varF.varId, ev.data.varF.value, ev.msgType, ev.data.varF.seq);
+  if (ev.data.varF.retry) return;
+  AppEmitVarF(ev.data.varF.varId, ev.data.varF.value);
 }
 
 static void HandleAck(const pen_rx_event_t& ev) {
   char name[5];
   char line[32];
   AppFormatVarName(ev.data.ack.varId, name);
-  snprintf(line, sizeof(line), "@ACK %u %s", (unsigned)ev.data.ack.ackSeq, name);
+  snprintf(line, sizeof(line), "@ACK %s", name);
   (void)AppPcTxLine(line);
 }
 
@@ -222,7 +227,7 @@ static void HandleNack(const pen_rx_event_t& ev) {
   char name[5];
   char line[32];
   AppFormatVarName(ev.data.nack.varId, name);
-  snprintf(line, sizeof(line), "@NACK %u %s %u", (unsigned)ev.data.nack.ackSeq, name, (unsigned)ev.data.nack.reason);
+  snprintf(line, sizeof(line), "@NACK %s %u", name, (unsigned)ev.data.nack.reason);
   (void)AppPcTxLine(line);
 }
 
@@ -245,13 +250,17 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
       (void)AppPcTxLine("@LINK AUTH_OK"); 
       break;
     case PEN_LINK_SECURE:
+#ifdef MELODY 
       hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
+#endif
       hmi_cmd_lcd_set_indicator(0U, true);
       (void)AppPcTxLine("@LINK SECURE");
       s_usbConnPen = -1;  // resend
       break;
     case PEN_LINK_LOST:
+#ifdef MELODY
       hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+#endif
       hmi_cmd_lcd_set_indicator(0U, false);
       hmi_cmd_lcd_set_progress(0U, 0U);
       hmi_cmd_lcd_set_progress(1U, 0U);
@@ -284,25 +293,21 @@ static void HandleErrorEvent(const pen_rx_event_t& ev) {
   if (ev.data.error.code != PEN_HW_ERR_NONE) {
     char errText[8];
     snprintf(errText, sizeof(errText), "E%u", (unsigned)ev.data.error.code);
-    hmi_cmd_lcd_draw_text(0U, 0U, GUI_COLOR_ORANGE, errText);
-  }
-}
-
-static void AppProcessPenRxEvent(const pen_rx_event_t& ev) {
-  switch (ev.type) {
-    case PEN_RX_LINK: HandleLinkEvent(ev); break;
-    case PEN_RX_ERROR: HandleErrorEvent(ev); break;
-    case PEN_RX_VAR_I: HandleVarI(ev); break;
-    case PEN_RX_VAR_F: HandleVarF(ev); break;
-    case PEN_RX_ACK: HandleAck(ev); break;
-    case PEN_RX_NACK: HandleNack(ev); break;
-    default: break;
+    hmi_cmd_lcd_draw_text(120U, 15U, GUI_COLOR_ORANGE, errText);
   }
 }
 
 static bool AppPenRxEvent(const pen_rx_event_t* ev) {
   if (ev == nullptr) return false;
-  AppProcessPenRxEvent(*ev);
+  switch (ev->type) {
+    case PEN_RX_LINK: HandleLinkEvent(*ev); break;
+    case PEN_RX_ERROR: HandleErrorEvent(*ev); break;
+    case PEN_RX_VAR_I: HandleVarI(*ev); break;
+    case PEN_RX_VAR_F: HandleVarF(*ev); break;
+    case PEN_RX_ACK: HandleAck(*ev); break;
+    case PEN_RX_NACK: HandleNack(*ev); break;
+    default: break;
+  }
   return true;
 }
 
@@ -320,8 +325,6 @@ static void AppProcessPenTx(void) {
     (void)pen_send_stream(PEN_VAR_JY_APP, joyY, 500U);
   }
 
-  // LUP/LDN/RUP/RDN используются как параметры только на Home.
-  // В меню (GUIGetActiveScene() != &s_sceneHome) эти кнопки остаются за GUI.
   if (GUIGetActiveScene() == &s_sceneHome) {
     if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U)) {
       ++s_lset;
@@ -361,14 +364,16 @@ static void AppProcessHomePowerOff(void) {
   }
   const uint32_t idleS = (uint32_t)(now - lastActivityMs) / 1000U;
   const int32_t remainingS = 300L - (int32_t)idleS;
-  if ((remainingS <= 6 && prevRemSec > 6) || (remainingS <= 4 && prevRemSec > 4) || (remainingS <= 2 && prevRemSec > 2)) {
-    hmi_cmd_play_tone(500U, 50U);
-  } else if (remainingS <= 1 && prevRemSec > 1) {
-    hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
-  } else if (remainingS <= 0 && prevRemSec > 0) {
-    hmi_cmd_power_off();
+  if(prevRemSec != remainingS){
+    if (remainingS==6 || remainingS==4 || remainingS==2) {
+      hmi_cmd_play_tone(500U, 50U);
+    } else if (remainingS == 1) {
+      hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+    } else if (remainingS <= 0) {
+      hmi_cmd_power_off();
+    }
+    prevRemSec = remainingS;
   }
-  prevRemSec = remainingS;
 }
 
 // [AppTask]
@@ -410,8 +415,11 @@ void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
   (void)pen_begin(AppPenRxEvent);
+#ifdef MELODY
   hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
-  //hmi_cmd_play_tone(200, 50);
+#else
+  hmi_cmd_play_tone(200, 50);
+#endif
   GUISetHomeScene(&s_sceneHome);
   GUISwitchScene(&s_sceneHome);
   (void)xTaskCreatePinnedToCore(AppTask, "AppTask", 4096U, nullptr, 2, &s_appTaskHandle, 1);

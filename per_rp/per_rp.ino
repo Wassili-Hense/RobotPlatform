@@ -40,16 +40,16 @@ static bool LooksFloat(const char* text) {
   return (text != nullptr) && ((strchr(text, '.') != nullptr) || (strchr(text, 'e') != nullptr) || (strchr(text, 'E') != nullptr));
 }
 
-static void SerialPrintVarI(uint32_t varId, int32_t value, uint8_t msgType, uint16_t seq) {
+static void SerialPrintVarI(uint32_t varId, int32_t value) {
   char name[5];
   VarIdToText(varId, name);
-  Serial.printf("%s %ld I %u %u\r\n", name, (long)value, (unsigned)msgType, (unsigned)seq);
+  Serial.printf("%s %ld\r\n", name, (long)value);
 }
 
-static void SerialPrintVarF(uint32_t varId, float value, uint8_t msgType, uint16_t seq) {
+static void SerialPrintVarF(uint32_t varId, float value) {
   char name[5];
   VarIdToText(varId, name);
-  Serial.printf("%s %.4f F %u %u\r\n", name, (double)value, (unsigned)msgType, (unsigned)seq);
+  Serial.printf("%s %.4f\r\n", name, (double)value);
 }
 
 static void HandleLinkEvent(const pen_rx_event_t& ev) {
@@ -100,19 +100,19 @@ static void HandleErrorEvent(const pen_rx_event_t& ev) {
 static void HandleAck(const pen_rx_event_t& ev) {
   char name[5];
   VarIdToText(ev.data.ack.varId, name);
-  Serial.printf("@ACK %u %s\r\n", (unsigned)ev.data.ack.ackSeq, name);
+  Serial.printf("@ACK %s\r\n", name);
 }
 
 static void HandleNack(const pen_rx_event_t& ev) {
   char name[5];
   VarIdToText(ev.data.nack.varId, name);
-  Serial.printf("@NACK %u %s %u\r\n", (unsigned)ev.data.nack.ackSeq, name, (unsigned)ev.data.nack.reason);
+  Serial.printf("@NACK %s %u\r\n", name, (unsigned)ev.data.nack.reason);
 }
 
 static void HandleGetVar(const pen_rx_event_t& ev) {
   char name[5];
   VarIdToText(ev.data.getVar.varId, name);
-  Serial.printf("@GET %u %s\r\n", (unsigned)ev.data.getVar.seq, name);
+  Serial.printf("@GET %s\r\n", name);
 }
 
 static bool PenRxEvent(const pen_rx_event_t* ev) {
@@ -125,10 +125,10 @@ static bool PenRxEvent(const pen_rx_event_t* ev) {
       HandleErrorEvent(*ev);
       break;
     case PEN_RX_VAR_I:
-      SerialPrintVarI(ev->data.varI.varId, ev->data.varI.value, ev->msgType, ev->data.varI.seq);
+      if (!ev->data.varI.retry) SerialPrintVarI(ev->data.varI.varId, ev->data.varI.value);
       break;
     case PEN_RX_VAR_F:
-      SerialPrintVarF(ev->data.varF.varId, ev->data.varF.value, ev->msgType, ev->data.varF.seq);
+      if (!ev->data.varF.retry) SerialPrintVarF(ev->data.varF.varId, ev->data.varF.value);
       break;
     case PEN_RX_ACK:
       HandleAck(*ev);

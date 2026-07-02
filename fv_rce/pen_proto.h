@@ -1,6 +1,5 @@
 #ifndef PEN_PROTO_H
 #define PEN_PROTO_H
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -55,7 +54,6 @@ static constexpr uint32_t PEN_CAPS = 0x00000001U;
 static constexpr char PEN_BIND_SECRET[] = "PEN-DEMO-BIND-SECRET";
 static constexpr uint8_t PEN_BROADCAST_MAC[6] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU };
 
-
 enum proto_msg_type_t : uint8_t {
     MSG_DISCOVERY_REQ = 0x02U,
     MSG_DISCOVERY_RSP = 0x03U,
@@ -90,8 +88,8 @@ struct pen_connect_req_payload_t { uint32_t rcId; uint32_t caps; uint8_t rcMac[6
 struct pen_connect_rsp_payload_t { uint32_t deviceId; uint32_t caps; uint32_t sessionId; uint8_t devMac[6]; uint8_t devNonce[16]; };
 struct pen_auth_req_payload_t { uint8_t rcProof[16]; };
 struct pen_auth_rsp_payload_t { uint8_t devProof[16]; };
-struct pen_var_i_payload_t { uint32_t varId; uint16_t ttlMs; int32_t value; };
-struct pen_var_f_payload_t { uint32_t varId; uint16_t ttlMs; float value; };
+struct pen_var_i_payload_t { uint32_t varId; int32_t value; };
+struct pen_var_f_payload_t { uint32_t varId; float value; };
 struct pen_get_var_payload_t { uint32_t varId; };
 struct pen_ack_payload_t { uint16_t ackSeq; uint32_t varId; };
 struct pen_nack_payload_t { uint16_t ackSeq; uint32_t varId; uint8_t reason; };
@@ -104,11 +102,10 @@ static_assert(sizeof(pen_connect_req_payload_t) == 30U, "pen_connect_req_payload
 static_assert(sizeof(pen_connect_rsp_payload_t) == 34U, "pen_connect_rsp_payload_t size changed");
 static_assert(sizeof(pen_auth_req_payload_t) == 16U, "pen_auth_req_payload_t size changed");
 static_assert(sizeof(pen_auth_rsp_payload_t) == 16U, "pen_auth_rsp_payload_t size changed");
-static_assert(sizeof(pen_var_i_payload_t) == 10U, "pen_var_i_payload_t size changed");
-static_assert(sizeof(pen_var_f_payload_t) == 10U, "pen_var_f_payload_t size changed");
+static_assert(sizeof(pen_var_i_payload_t) == 8U, "pen_var_i_payload_t size changed");
+static_assert(sizeof(pen_var_f_payload_t) == 8U, "pen_var_f_payload_t size changed");
 static_assert(sizeof(pen_get_var_payload_t) == 4U, "pen_get_var_payload_t size changed");
 static_assert(sizeof(pen_ack_payload_t) == 6U, "pen_ack_payload_t size changed");
 static_assert(sizeof(pen_nack_payload_t) == 7U, "pen_nack_payload_t size changed");
 static_assert((PEN_MSG_FLAG_RETRY & PEN_MSG_TYPE_MASK) == 0U, "retry flag overlaps type mask");
-
 #endif
