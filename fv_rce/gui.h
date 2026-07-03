@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "hmi.h"
+#include "st7735.h"
 // -----------------------------------------------------------------------------
 // Section: Common
 // -----------------------------------------------------------------------------
@@ -35,7 +36,9 @@ typedef struct {
 void GUISwitchScene(gui_scene_t* scene);
 void GUISetHomeScene(gui_scene_t* scene);
 gui_scene_t* GUIGetActiveScene(void);
-bool GUIServiceActiveScene(void);
+void GUIServiceActiveScene(void);
+void GUISetIndicator(uint8_t index, bool state);
+void GUISetProgress(uint8_t index, uint8_t value);
 
 // -----------------------------------------------------------------------------
 // Section: GUIComponent

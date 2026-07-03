@@ -23,12 +23,6 @@ static constexpr uint8_t CMD_BACKLIGHT_BRIGHTNESS = 0x04;
 static constexpr uint8_t CMD_TONE = 0x07;
 static constexpr uint8_t CMD_MELODY = 0x08;
 static constexpr uint8_t CMD_POWER_OFF = 0x0F;
-static constexpr uint8_t CMD_LCD_CLEAR = 0x10;
-static constexpr uint8_t CMD_LCD_DRAW_MARKER = 0x12;
-static constexpr uint8_t CMD_LCD_DRAW_TEXT = 0x13;
-static constexpr uint8_t CMD_LCD_SET_BG = 0x14;
-static constexpr uint8_t CMD_LCD_INDICATOR = 0x20;
-static constexpr uint8_t CMD_LCD_PROGRESS = 0x21;
 
 enum hmi_sys_cmd_type_t {
   HMI_SYS_CMD_BEEP = 0,
@@ -36,11 +30,6 @@ enum hmi_sys_cmd_type_t {
   HMI_SYS_CMD_POWER_OFF,
   HMI_SYS_CMD_BRIGHTNESS,
   HMI_SYS_CMD_BL_TIMEOUT,
-  HMI_SYS_CMD_INDICATOR0,
-  HMI_SYS_CMD_INDICATOR1,
-  HMI_SYS_CMD_PROGRESS0,
-  HMI_SYS_CMD_PROGRESS1,
-  HMI_SYS_CMD_PROGRESS2,
   HMI_SYS_CMD_COUNT
 };
 
@@ -72,10 +61,6 @@ static hmi_sys_u8_t s_sysMelody = { 0U, false };
 static bool s_sysPowerOff = false;
 static hmi_sys_u8_t s_sysBrightness = { 0U, false };
 static hmi_sys_bl_timeout_t s_sysBlTimeout = { 0U, false };
-static hmi_sys_u8_t s_sysIndicator[2] = { { 0U, false }, { 0U, false } };
-static hmi_sys_u8_t s_sysProgress[3] = { { 255U, false }, { 255U, false }, { 255U, false } };
-static uint32_t s_progressLastTxMs[2] = { 0U, 0U };
-static constexpr uint32_t PROGRESS_MIN_PERIOD_MS = 1000U;
 
 static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
   return (data & ~(1UL << idx)) | (((uint32_t)(value & 1U)) << idx);
@@ -166,7 +151,7 @@ static bool WaitForI2cDevice(void) {
   }
 }
 
-static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len, bool isLcd) {
+static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len) {
   if (!s_initialized) {
     LogError(funcName, "NOT_INITIALIZED");
     return HMI_CMD_ERR_NOT_INITIALIZED;
@@ -174,10 +159,6 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
   if ((data == nullptr) || (len == 0U) || (len > 32U)) {
     LogError(funcName, "INVALID_ARG");
     return HMI_CMD_ERR_INVALID_ARG;
-  }
-  if (isLcd && !s_lcdSendAllowed) {
-    LogError(funcName, "NOT_READY");
-    return HMI_CMD_ERR_NOT_READY;
   }
 
   Wire.beginTransmission(I2C_ADDR);
@@ -188,9 +169,6 @@ static hmi_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, u
     return HMI_CMD_ERR_I2C_TX;
   }
 
-  if (isLcd) {
-    s_lcdSendAllowed = false;
-  }
 
   LogTxBytes(data, len);
   return HMI_CMD_OK;
@@ -234,12 +212,6 @@ static hmi_sys_cmd_type_t FindNextSysCmd(void) {
   if (s_sysMelody.hasData) return HMI_SYS_CMD_MELODY;
   if (s_sysBrightness.hasData) return HMI_SYS_CMD_BRIGHTNESS;
   if (s_sysBlTimeout.hasData) return HMI_SYS_CMD_BL_TIMEOUT;
-  if (s_sysIndicator[0].hasData) return HMI_SYS_CMD_INDICATOR0;
-  if (s_sysIndicator[1].hasData) return HMI_SYS_CMD_INDICATOR1;
-  const uint32_t now = millis();
-  if (s_sysProgress[0].hasData && ((now - s_progressLastTxMs[0]) >= PROGRESS_MIN_PERIOD_MS)) return HMI_SYS_CMD_PROGRESS0;
-  if (s_sysProgress[1].hasData && ((now - s_progressLastTxMs[1]) >= PROGRESS_MIN_PERIOD_MS)) return HMI_SYS_CMD_PROGRESS1;
-  if (s_sysProgress[2].hasData) return HMI_SYS_CMD_PROGRESS2;
   if (s_sysPowerOff) return HMI_SYS_CMD_POWER_OFF;
   return HMI_SYS_CMD_COUNT;
 }
@@ -260,23 +232,6 @@ static void ClearSysCmd(hmi_sys_cmd_type_t type) {
       break;
     case HMI_SYS_CMD_BL_TIMEOUT:
       s_sysBlTimeout.hasData = false;
-      break;
-    case HMI_SYS_CMD_INDICATOR0:
-      s_sysIndicator[0].hasData = false;
-      break;
-    case HMI_SYS_CMD_INDICATOR1:
-      s_sysIndicator[1].hasData = false;
-      break;
-    case HMI_SYS_CMD_PROGRESS0:
-      s_sysProgress[0].hasData = false;
-      s_progressLastTxMs[0] = millis();
-      break;
-    case HMI_SYS_CMD_PROGRESS1:
-      s_sysProgress[1].hasData = false;
-      s_progressLastTxMs[1] = millis();
-      break;
-    case HMI_SYS_CMD_PROGRESS2:
-      s_sysProgress[2].hasData = false;
       break;
     default:
       break;
@@ -353,10 +308,7 @@ bool hmi_changed(hmi_data_idx_t idx) {
 
 void hmi_sysSend(void) {
   const hmi_sys_cmd_type_t type = FindNextSysCmd();
-  if (type == HMI_SYS_CMD_COUNT) {
-    return;
-  }
-
+  if (type == HMI_SYS_CMD_COUNT) return;
   hmi_cmd_result_t rc = HMI_CMD_ERR_INVALID_ARG;
   switch (type) {
     case HMI_SYS_CMD_BEEP: {
@@ -366,22 +318,22 @@ void hmi_sysSend(void) {
       data[2] = (uint8_t)(s_sysBeep.divider >> 8);
       data[3] = (uint8_t)(s_sysBeep.delayMs & 0xFFU);
       data[4] = (uint8_t)(s_sysBeep.delayMs >> 8);
-      rc = SendCommand("hmi_Beep", data, sizeof(data), false);
+      rc = SendCommand("hmi_Beep", data, sizeof(data));
       break;
     }
     case HMI_SYS_CMD_MELODY: {
       const uint8_t data[2] = { CMD_MELODY, s_sysMelody.value };
-      rc = SendCommand("hmi_Melody", data, sizeof(data), false);
+      rc = SendCommand("hmi_Melody", data, sizeof(data));
       break;
     }
     case HMI_SYS_CMD_POWER_OFF: {
       const uint8_t data[2] = { CMD_POWER_OFF, 0xAAU };
-      rc = SendCommand("hmi_Power", data, sizeof(data), false);
+      rc = SendCommand("hmi_Power", data, sizeof(data));
       break;
     }
     case HMI_SYS_CMD_BRIGHTNESS: {
       const uint8_t data[2] = { CMD_BACKLIGHT_BRIGHTNESS, s_sysBrightness.value };
-      rc = SendCommand("hmi_BR", data, sizeof(data), false);
+      rc = SendCommand("hmi_BR", data, sizeof(data));
       break;
     }
     case HMI_SYS_CMD_BL_TIMEOUT: {
@@ -392,31 +344,13 @@ void hmi_sysSend(void) {
         (uint8_t)((s_sysBlTimeout.timeoutMs >> 16) & 0xFFU),
         (uint8_t)((s_sysBlTimeout.timeoutMs >> 24) & 0xFFU)
       };
-      rc = SendCommand("hmi_TO", data, sizeof(data), false);
-      break;
-    }
-    case HMI_SYS_CMD_INDICATOR0:
-    case HMI_SYS_CMD_INDICATOR1: {
-      const uint8_t index = (type == HMI_SYS_CMD_INDICATOR0) ? 0U : 1U;
-      const uint8_t data[3] = { CMD_LCD_INDICATOR, index, s_sysIndicator[index].value };
-      rc = SendCommand("hmi_Ind", data, sizeof(data), true);
-      break;
-    }
-    case HMI_SYS_CMD_PROGRESS0:
-    case HMI_SYS_CMD_PROGRESS1:
-    case HMI_SYS_CMD_PROGRESS2: {
-      const uint8_t index = (uint8_t)(type - HMI_SYS_CMD_PROGRESS0);
-      const uint8_t data[3] = { CMD_LCD_PROGRESS, index, s_sysProgress[index].value };
-      rc = SendCommand("hmi_Progr", data, sizeof(data), true);
+      rc = SendCommand("hmi_TO", data, sizeof(data));
       break;
     }
     default:
       return;
   }
-
-  if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-    ClearSysCmd(type);
-  }
+  if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) ClearSysCmd(type);
 }
 
 void hmi_cmd_set_backlight_timeout(uint32_t timeout_ms) {
@@ -470,80 +404,14 @@ void hmi_cmd_power_off(void) {
   s_sysPowerOff = true;
 }
 
-hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color) {
-  uint8_t data[3];
-  data[0] = CMD_LCD_CLEAR;
-  data[1] = (uint8_t)(rgb565_color & 0xFFU);
-  data[2] = (uint8_t)(rgb565_color >> 8);
-  return SendCommand("hmi_cmd_lcd_clear", data, sizeof(data), true);
-}
 
-hmi_cmd_result_t hmi_cmd_lcd_set_bg(uint16_t rgb565_color) {
-  uint8_t data[3];
-  data[0] = CMD_LCD_SET_BG;
-  data[1] = (uint8_t)(rgb565_color & 0xFFU);
-  data[2] = (uint8_t)(rgb565_color >> 8);
-  return SendCommand("hmi_cmd_lcd_set_bg", data, sizeof(data), true);
-}
 
-hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_color, const char* text) {
-  if (text == nullptr) {
-    LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
-    return HMI_CMD_ERR_INVALID_ARG;
-  }
 
-  const size_t textLen = strlen(text);
-  if (textLen > 26U) {
-    LogError("hmi_cmd_lcd_draw_text", "INVALID_ARG");
-    return HMI_CMD_ERR_INVALID_ARG;
-  }
 
-  uint8_t data[32] = { 0 };
-  data[0] = CMD_LCD_DRAW_TEXT;
-  data[1] = x;
-  data[2] = y;
-  data[3] = (uint8_t)(rgb565_color & 0xFFU);
-  data[4] = (uint8_t)(rgb565_color >> 8);
-  memcpy(&data[5], text, textLen);
-  data[5U + textLen] = 0U;
-  return SendCommand("hmi_cmd_lcd_draw_text", data, (uint8_t)(6U + textLen), true);
-}
 
-hmi_cmd_result_t hmi_cmd_lcd_draw_marker(uint8_t x, uint8_t y, uint8_t index, uint16_t rgb565_color) {
-  uint8_t data[6];
-  data[0] = CMD_LCD_DRAW_MARKER;
-  data[1] = x;
-  data[2] = y;
-  data[3] = index;
-  data[4] = (uint8_t)(rgb565_color & 0xFFU);
-  data[5] = (uint8_t)(rgb565_color >> 8);
-  return SendCommand("hmi_cmd_lcd_draw_marker", data, sizeof(data), true);
-}
 
-void hmi_cmd_lcd_set_indicator(uint8_t index, bool state) {
-  if (index > 1U) {
-    LogError("hmi_cmd_lcd_set_indicator", "INVALID_ARG");
-    return;
-  }
-  if (!s_initialized) {
-    LogError("hmi_cmd_lcd_set_indicator", "NOT_INITIALIZED");
-    return;
-  }
-  s_sysIndicator[index].value = state ? 1U : 0U;
-  s_sysIndicator[index].hasData = true;
-}
 
-void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value) {
-  if (index > 2U) {
-    LogError("hmi_cmd_lcd_set_progress", "INVALID_ARG");
-    return;
-  }
-  if (!s_initialized) {
-    LogError("hmi_cmd_lcd_set_progress", "NOT_INITIALIZED");
-    return;
-  }
-  if(s_sysProgress[index].value != value){
-    s_sysProgress[index].value = value;
-    s_sysProgress[index].hasData = true;
-  }
-}
+
+
+
+

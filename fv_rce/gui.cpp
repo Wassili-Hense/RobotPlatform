@@ -7,19 +7,22 @@
 
 namespace {
 enum gui_class_id_t : uint8_t {
-    GUI_CLASS_CLS = 1,
-    GUI_CLASS_J_VIEW,
-    GUI_CLASS_HOT_KEY,
-    GUI_CLASS_LABEL,
-    GUI_CLASS_VAR,
-    GUI_CLASS_MENU_ITEM,
-    GUI_CLASS_BRIGHTNESS
+  GUI_CLASS_CLS = 1,
+  GUI_CLASS_J_VIEW,
+  GUI_CLASS_HOT_KEY,
+  GUI_CLASS_LABEL,
+  GUI_CLASS_VAR,
+  GUI_CLASS_MENU_ITEM,
+  GUI_CLASS_BRIGHTNESS
 };
 
 static gui_scene_t* s_guiActiveScene = nullptr;
 static gui_scene_t* s_guiHomeScene = nullptr;
 static uint32_t s_guiLastActivityMs = 0U;
 static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 60000U;
+static bool s_guiIndicatorValue[2] = { false, false };
+static bool s_guiIndicatorPending[2] = { true, true };
+static uint8_t s_guiProgressValue[4] = { 0U, 0U, 0U, 0U };
 }
 
 // -----------------------------------------------------------------------------
@@ -35,14 +38,10 @@ static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 60000U;
 namespace {
 static constexpr uint32_t GUI_CLS_KEEPALIVE_PERIOD_MS = 10000U;
 static constexpr uint16_t GUI_CLS_KEEPALIVE_TIMEOUT_MS = 15000U;
-
-static bool GUIIsLcdReady(void) {
-    return (hmi_get(HMI_DATA_STAT_LCD_BUSY) == 0U);
-}
 }
 
 uint8_t GUIClsComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_CLS;
+  return (uint8_t)GUI_CLASS_CLS;
 }
 
 GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
@@ -53,35 +52,33 @@ GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
 }
 
 bool GUIClsComponent::SendBacklightKeepOn(void) {
-    if (!m_highlight) return false;
-    const uint32_t now = millis();
-    if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
-    hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
-    m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
-    return true;
+  if (!m_highlight) return false;
+  const uint32_t now = millis();
+  if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
+  hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
+  m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
+  return true;
 }
 
 void GUIClsComponent::Enter(void) {
-    m_pendingClear = true;
-    m_nextKeepAliveMs = millis();
+  m_pendingClear = true;
+  m_nextKeepAliveMs = millis();
 }
 
 void GUIClsComponent::Process(void) {
 }
 
 bool GUIClsComponent::Send(void) {
-    if (m_pendingClear && GUIIsLcdReady()) {
-        const hmi_cmd_result_t rc = hmi_cmd_lcd_clear(m_color);
-        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-            m_pendingClear = false;
-        }
-        return true;
-    }
-    return SendBacklightKeepOn();
+  if (m_pendingClear) {
+    LCD_Clear(m_color);
+    m_pendingClear = false;
+    return true;
+  }
+  return SendBacklightKeepOn();
 }
 
 void GUIClsComponent::Exit(void) {
-    m_pendingClear = false;
+  m_pendingClear = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -95,49 +92,49 @@ static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 10U;
 static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
 
 static uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
-    if (outMax <= outMin) return outMin;
-    if (value > 4095U) return outMax;
-    return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
+  if (outMax <= outMin) return outMin;
+  if (value > 4095U) return outMax;
+  return (uint8_t)(outMin + (((uint32_t)value * (uint32_t)(outMax - outMin)) / 4095U));
 }
 
 static uint8_t GUIMapLinearWindow(uint16_t value, uint16_t inMin, uint16_t inMax, uint8_t outMin, uint8_t outMax) {
-    if (value <= inMin) return outMin;
-    if (value >= inMax) return outMax;
-    return (uint8_t)(outMin + ((((uint32_t)(value - inMin)) * (uint32_t)(outMax - outMin)) / (uint32_t)(inMax - inMin)));
+  if (value <= inMin) return outMin;
+  if (value >= inMax) return outMax;
+  return (uint8_t)(outMin + ((((uint32_t)(value - inMin)) * (uint32_t)(outMax - outMin)) / (uint32_t)(inMax - inMin)));
 }
 
 static uint8_t GUIMapCalibratedValue(uint16_t value, const gui_axis_cal_t& cal, uint8_t outMin, uint8_t outMax) {
-    const uint8_t outMid = (uint8_t)(outMin + ((outMax - outMin) / 2U));
-    const uint16_t leftMin = cal.eMin;
-    const uint16_t leftMax = cal.cMin;
-    const uint16_t rightMin = cal.cMax;
-    const uint16_t rightMax = cal.eMax;
+  const uint8_t outMid = (uint8_t)(outMin + ((outMax - outMin) / 2U));
+  const uint16_t leftMin = cal.eMin;
+  const uint16_t leftMax = cal.cMin;
+  const uint16_t rightMin = cal.cMax;
+  const uint16_t rightMax = cal.eMax;
 
-    if (value <= leftMax) return GUIMapLinearWindow(value, leftMin, leftMax, outMin, outMid);
-    if (value >= rightMin) return GUIMapLinearWindow(value, rightMin, rightMax, outMid, outMax);
-    return outMid;
+  if (value <= leftMax) return GUIMapLinearWindow(value, leftMin, leftMax, outMin, outMid);
+  if (value >= rightMin) return GUIMapLinearWindow(value, rightMin, rightMax, outMid, outMax);
+  return outMid;
 }
 
 static void GUILoadCalibrationFromPreferences(gui_axis_cal_t* axisX, gui_axis_cal_t* axisY) {
-    if ((axisX == nullptr) || (axisY == nullptr)) return;
+  if ((axisX == nullptr) || (axisY == nullptr)) return;
 
-    Preferences prefs;
-    if (!prefs.begin("joycal", true)) return;
+  Preferences prefs;
+  if (!prefs.begin("joycal", true)) return;
 
-    axisX->eMin = prefs.getUShort("xemin", axisX->eMin);
-    axisX->cMin = prefs.getUShort("xcmin", axisX->cMin);
-    axisX->cMax = prefs.getUShort("xcmax", axisX->cMax);
-    axisX->eMax = prefs.getUShort("xemax", axisX->eMax);
-    axisY->eMin = prefs.getUShort("yemin", axisY->eMin);
-    axisY->cMin = prefs.getUShort("ycmin", axisY->cMin);
-    axisY->cMax = prefs.getUShort("ycmax", axisY->cMax);
-    axisY->eMax = prefs.getUShort("yemax", axisY->eMax);
-    prefs.end();
+  axisX->eMin = prefs.getUShort("xemin", axisX->eMin);
+  axisX->cMin = prefs.getUShort("xcmin", axisX->cMin);
+  axisX->cMax = prefs.getUShort("xcmax", axisX->cMax);
+  axisX->eMax = prefs.getUShort("xemax", axisX->eMax);
+  axisY->eMin = prefs.getUShort("yemin", axisY->eMin);
+  axisY->cMin = prefs.getUShort("ycmin", axisY->cMin);
+  axisY->cMax = prefs.getUShort("ycmax", axisY->cMax);
+  axisY->eMax = prefs.getUShort("yemax", axisY->eMax);
+  prefs.end();
 }
 }
 
 uint8_t GUIJViewComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_J_VIEW;
+  return (uint8_t)GUI_CLASS_J_VIEW;
 }
 
 GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axisX, gui_axis_cal_t* axisY)
@@ -166,221 +163,221 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axi
 }
 
 void GUIJViewComponent::UpdateWindow(void) {
-    if ((m_axisX == nullptr) || (m_axisY == nullptr)) {
-        m_windowMinX = 0U;
-        m_windowMaxX = 4095U;
-        m_windowMinY = 0U;
-        m_windowMaxY = 4095U;
-        return;
-    }
+  if ((m_axisX == nullptr) || (m_axisY == nullptr)) {
+    m_windowMinX = 0U;
+    m_windowMaxX = 4095U;
+    m_windowMinY = 0U;
+    m_windowMaxY = 4095U;
+    return;
+  }
 
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
-        const uint16_t centerX = (uint16_t)(((uint32_t)m_axisX->cMin + (uint32_t)m_axisX->cMax) / 2U);
-        const uint16_t centerY = (uint16_t)(((uint32_t)m_axisY->cMin + (uint32_t)m_axisY->cMax) / 2U);
-        const uint16_t widthX = (uint16_t)(((m_axisX->cMax >= m_axisX->cMin) ? (m_axisX->cMax - m_axisX->cMin) : 0U) * 2U);
-        const uint16_t widthY = (uint16_t)(((m_axisY->cMax >= m_axisY->cMin) ? (m_axisY->cMax - m_axisY->cMin) : 0U) * 2U);
-        const uint16_t spanX = (widthX >= 70U) ? widthX : 70U;
-        const uint16_t spanY = (widthY >= 70U) ? widthY : 70U;
-        const uint16_t halfX = (uint16_t)(spanX / 2U);
-        const uint16_t halfY = (uint16_t)(spanY / 2U);
+  if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
+    const uint16_t centerX = (uint16_t)(((uint32_t)m_axisX->cMin + (uint32_t)m_axisX->cMax) / 2U);
+    const uint16_t centerY = (uint16_t)(((uint32_t)m_axisY->cMin + (uint32_t)m_axisY->cMax) / 2U);
+    const uint16_t widthX = (uint16_t)(((m_axisX->cMax >= m_axisX->cMin) ? (m_axisX->cMax - m_axisX->cMin) : 0U) * 2U);
+    const uint16_t widthY = (uint16_t)(((m_axisY->cMax >= m_axisY->cMin) ? (m_axisY->cMax - m_axisY->cMin) : 0U) * 2U);
+    const uint16_t spanX = (widthX >= 70U) ? widthX : 70U;
+    const uint16_t spanY = (widthY >= 70U) ? widthY : 70U;
+    const uint16_t halfX = (uint16_t)(spanX / 2U);
+    const uint16_t halfY = (uint16_t)(spanY / 2U);
 
-        m_windowMinX = (centerX > halfX) ? (uint16_t)(centerX - halfX) : 0U;
-        m_windowMaxX = (uint16_t)((centerX + halfX <= 4095U) ? (centerX + halfX) : 4095U);
-        m_windowMinY = (centerY > halfY) ? (uint16_t)(centerY - halfY) : 0U;
-        m_windowMaxY = (uint16_t)((centerY + halfY <= 4095U) ? (centerY + halfY) : 4095U);
-        return;
-    }
+    m_windowMinX = (centerX > halfX) ? (uint16_t)(centerX - halfX) : 0U;
+    m_windowMaxX = (uint16_t)((centerX + halfX <= 4095U) ? (centerX + halfX) : 4095U);
+    m_windowMinY = (centerY > halfY) ? (uint16_t)(centerY - halfY) : 0U;
+    m_windowMaxY = (uint16_t)((centerY + halfY <= 4095U) ? (centerY + halfY) : 4095U);
+    return;
+  }
 
-    m_windowMinX = m_axisX->eMin;
-    m_windowMaxX = m_axisX->eMax;
-    m_windowMinY = m_axisY->eMin;
-    m_windowMaxY = m_axisY->eMax;
+  m_windowMinX = m_axisX->eMin;
+  m_windowMaxX = m_axisX->eMax;
+  m_windowMinY = m_axisY->eMin;
+  m_windowMaxY = m_axisY->eMax;
 }
 
 uint8_t GUIJViewComponent::MapAxisX(uint16_t value) const {
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinX, m_windowMaxX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
-    if (m_axisX == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
-    return GUIMapCalibratedValue(value, *m_axisX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
+  if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinX, m_windowMaxX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
+  if (m_axisX == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
+  return GUIMapCalibratedValue(value, *m_axisX, GUI_J_VIEW_OUT_MIN_X, GUI_J_VIEW_OUT_MAX_X);
 }
 
 uint8_t GUIJViewComponent::MapAxisY(uint16_t value) const {
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinY, m_windowMaxY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
-    if (m_axisY == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
-    return GUIMapCalibratedValue(value, *m_axisY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
+  if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) return GUIMapLinearWindow(value, m_windowMinY, m_windowMaxY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
+  if (m_axisY == nullptr) return GUIMapAxis(value, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
+  return GUIMapCalibratedValue(value, *m_axisY, GUI_J_VIEW_OUT_MIN_Y, GUI_J_VIEW_OUT_MAX_Y);
 }
 
 bool GUIJViewComponent::SaveCalibration(void) {
-    if (!m_hasSample || (m_axisX == nullptr) || (m_axisY == nullptr)) return false;
+  if (!m_hasSample || (m_axisX == nullptr) || (m_axisY == nullptr)) return false;
 
-    if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
-        m_axisX->cMin = (m_minX > 4U) ? (uint16_t)(m_minX - 4U) : 0U;
-        m_axisX->cMax = (m_maxX < 4091U) ? (uint16_t)(m_maxX + 4U) : 4095U;
-        m_axisY->cMin = (m_minY > 4U) ? (uint16_t)(m_minY - 4U) : 0U;
-        m_axisY->cMax = (m_maxY < 4091U) ? (uint16_t)(m_maxY + 4U) : 4095U;
-    } else if (m_mode == GUI_J_VIEW_MODE_CAL_EDGE) {
-        m_axisX->eMin = m_minX;
-        m_axisX->eMax = m_maxX;
-        m_axisY->eMin = m_minY;
-        m_axisY->eMax = m_maxY;
-    } else {
-        return false;
-    }
+  if (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) {
+    m_axisX->cMin = (m_minX > 4U) ? (uint16_t)(m_minX - 4U) : 0U;
+    m_axisX->cMax = (m_maxX < 4091U) ? (uint16_t)(m_maxX + 4U) : 4095U;
+    m_axisY->cMin = (m_minY > 4U) ? (uint16_t)(m_minY - 4U) : 0U;
+    m_axisY->cMax = (m_maxY < 4091U) ? (uint16_t)(m_maxY + 4U) : 4095U;
+  } else if (m_mode == GUI_J_VIEW_MODE_CAL_EDGE) {
+    m_axisX->eMin = m_minX;
+    m_axisX->eMax = m_maxX;
+    m_axisY->eMin = m_minY;
+    m_axisY->eMax = m_maxY;
+  } else {
+    return false;
+  }
 
-    Preferences prefs;
-    if (!prefs.begin("joycal", false)) return false;
+  Preferences prefs;
+  if (!prefs.begin("joycal", false)) return false;
 
-    prefs.putUShort("xemin", m_axisX->eMin);
-    prefs.putUShort("xcmin", m_axisX->cMin);
-    prefs.putUShort("xcmax", m_axisX->cMax);
-    prefs.putUShort("xemax", m_axisX->eMax);
-    prefs.putUShort("yemin", m_axisY->eMin);
-    prefs.putUShort("ycmin", m_axisY->cMin);
-    prefs.putUShort("ycmax", m_axisY->cMax);
-    prefs.putUShort("yemax", m_axisY->eMax);
-    prefs.end();
+  prefs.putUShort("xemin", m_axisX->eMin);
+  prefs.putUShort("xcmin", m_axisX->cMin);
+  prefs.putUShort("xcmax", m_axisX->cMax);
+  prefs.putUShort("xemax", m_axisX->eMax);
+  prefs.putUShort("yemin", m_axisY->eMin);
+  prefs.putUShort("ycmin", m_axisY->cMin);
+  prefs.putUShort("ycmax", m_axisY->cMax);
+  prefs.putUShort("yemax", m_axisY->eMax);
+  prefs.end();
 
-    UpdateWindow();
-    return true;
+  UpdateWindow();
+  return true;
 }
 
 bool GUIJViewComponent::HandleButtons(void) {
-    if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !hmi_changed(HMI_DATA_BTN_OK) || (hmi_get(HMI_DATA_BTN_OK) == 0U)) {
-        return false;
-    }
-    return SaveCalibration();
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !hmi_changed(HMI_DATA_BTN_OK) || (hmi_get(HMI_DATA_BTN_OK) == 0U)) {
+    return false;
+  }
+  return SaveCalibration();
 }
 
 bool GUIJViewComponent::Update(void) {
-    const bool backlightOn = (hmi_get(HMI_DATA_STAT_BL_ON) != 0U);
-    if (!backlightOn) {
-        if ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible) {
-            m_phase = GUI_J_VIEW_PHASE_ERASE;
-            m_pending = true;
-            return true;
-        }
-        m_phase = GUI_J_VIEW_PHASE_IDLE;
-        m_pending = false;
-        return false;
+  const bool backlightOn = (hmi_get(HMI_DATA_STAT_BL_ON) != 0U);
+  if (!backlightOn) {
+    if ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible) {
+      m_phase = GUI_J_VIEW_PHASE_ERASE;
+      m_pending = true;
+      return true;
     }
-
-    UpdateWindow();
-    m_rawX = hmi_get(HMI_DATA_JOY_X);
-    m_rawY = hmi_get(HMI_DATA_JOY_Y);
-
-    if (!m_hasSample) {
-        m_hasSample = true;
-        m_minX = m_maxX = m_rawX;
-        m_minY = m_maxY = m_rawY;
-    } else {
-        if (m_rawX < m_minX) m_minX = m_rawX;
-        if (m_rawX > m_maxX) m_maxX = m_rawX;
-        if (m_rawY < m_minY) m_minY = m_rawY;
-        if (m_rawY > m_maxY) m_maxY = m_rawY;
-    }
-
-    m_nextX = MapAxisX(m_rawX);
-    m_nextY = MapAxisY(m_rawY);
-
-    if (m_mode == GUI_J_VIEW_MODE_TRACK) {
-        if ((m_phase == GUI_J_VIEW_PHASE_DRAW) || (m_phase == GUI_J_VIEW_PHASE_ERASE)) return true;
-        if (!m_visible) {
-            m_phase = GUI_J_VIEW_PHASE_DRAW;
-            m_pending = true;
-            return true;
-        }
-        if ((m_currentX == m_nextX) && (m_currentY == m_nextY)) {
-            m_phase = GUI_J_VIEW_PHASE_IDLE;
-            m_pending = false;
-            return false;
-        }
-        m_phase = GUI_J_VIEW_PHASE_ERASE;
-        m_pending = true;
-        return true;
-    }
-
-    if (!m_visible || (m_currentX != m_nextX) || (m_currentY != m_nextY)) {
-        m_phase = GUI_J_VIEW_PHASE_DRAW;
-        m_pending = true;
-        return true;
-    }
-
     m_phase = GUI_J_VIEW_PHASE_IDLE;
     m_pending = false;
     return false;
+  }
+
+  UpdateWindow();
+  m_rawX = hmi_get(HMI_DATA_JOY_X);
+  m_rawY = hmi_get(HMI_DATA_JOY_Y);
+
+  if (!m_hasSample) {
+    m_hasSample = true;
+    m_minX = m_maxX = m_rawX;
+    m_minY = m_maxY = m_rawY;
+  } else {
+    if (m_rawX < m_minX) m_minX = m_rawX;
+    if (m_rawX > m_maxX) m_maxX = m_rawX;
+    if (m_rawY < m_minY) m_minY = m_rawY;
+    if (m_rawY > m_maxY) m_maxY = m_rawY;
+  }
+
+  m_nextX = MapAxisX(m_rawX);
+  m_nextY = MapAxisY(m_rawY);
+
+  if (m_mode == GUI_J_VIEW_MODE_TRACK) {
+    if ((m_phase == GUI_J_VIEW_PHASE_DRAW) || (m_phase == GUI_J_VIEW_PHASE_ERASE)) return true;
+    if (!m_visible) {
+      m_phase = GUI_J_VIEW_PHASE_DRAW;
+      m_pending = true;
+      return true;
+    }
+    if ((m_currentX == m_nextX) && (m_currentY == m_nextY)) {
+      m_phase = GUI_J_VIEW_PHASE_IDLE;
+      m_pending = false;
+      return false;
+    }
+    m_phase = GUI_J_VIEW_PHASE_ERASE;
+    m_pending = true;
+    return true;
+  }
+
+  if (!m_visible || (m_currentX != m_nextX) || (m_currentY != m_nextY)) {
+    m_phase = GUI_J_VIEW_PHASE_DRAW;
+    m_pending = true;
+    return true;
+  }
+
+  m_phase = GUI_J_VIEW_PHASE_IDLE;
+  m_pending = false;
+  return false;
 }
 
 void GUIJViewComponent::Enter(void) {
-    m_currentX = 0U;
-    m_currentY = 0U;
-    m_nextX = 0U;
-    m_nextY = 0U;
-    m_visible = false;
-    m_pending = false;
-    m_hasSample = false;
-    m_rawX = 0U;
-    m_rawY = 0U;
-    m_minX = 0U;
-    m_minY = 0U;
-    m_maxX = 0U;
-    m_maxY = 0U;
-    if (!m_trackCalLoaded) {
-        GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
-        m_trackCalLoaded = true;
-    }
-    m_phase = GUI_J_VIEW_PHASE_IDLE;
+  m_currentX = 0U;
+  m_currentY = 0U;
+  m_nextX = 0U;
+  m_nextY = 0U;
+  m_visible = false;
+  m_pending = false;
+  m_hasSample = false;
+  m_rawX = 0U;
+  m_rawY = 0U;
+  m_minX = 0U;
+  m_minY = 0U;
+  m_maxX = 0U;
+  m_maxY = 0U;
+  if (!m_trackCalLoaded) {
+    GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
+    m_trackCalLoaded = true;
+  }
+  m_phase = GUI_J_VIEW_PHASE_IDLE;
 }
 
 void GUIJViewComponent::Process(void) {
-    if (HandleButtons()) return;
-    (void)Update();
+  if (HandleButtons()) return;
+  (void)Update();
 }
 
 bool GUIJViewComponent::Send(void) {
-    if (!m_pending || !GUIIsLcdReady()) return false;
+  if (!m_pending) return false;
 
-    if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (m_phase == GUI_J_VIEW_PHASE_ERASE)) {
-        const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_marker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
-        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-            m_visible = false;
-            if ((hmi_get(HMI_DATA_STAT_BL_ON) != 0U) && ((m_currentX != m_nextX) || (m_currentY != m_nextY))) {
-                m_phase = GUI_J_VIEW_PHASE_DRAW;
-            } else {
-                m_phase = GUI_J_VIEW_PHASE_IDLE;
-                m_pending = false;
-            }
-        }
-        return true;
-    }
-
-    if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (hmi_get(HMI_DATA_STAT_BL_ON) == 0U)) {
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (m_phase == GUI_J_VIEW_PHASE_ERASE)) {
+    LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
+    {
+      m_visible = false;
+      if ((hmi_get(HMI_DATA_STAT_BL_ON) != 0U) && ((m_currentX != m_nextX) || (m_currentY != m_nextY))) {
+        m_phase = GUI_J_VIEW_PHASE_DRAW;
+      } else {
         m_phase = GUI_J_VIEW_PHASE_IDLE;
         m_pending = false;
-        return false;
+      }
     }
+    return true;
+  }
 
-    if (m_phase == GUI_J_VIEW_PHASE_DRAW) {
-        const uint8_t markerIndex = (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? 5U : 3U;
-        const uint16_t markerColor = (m_mode == GUI_J_VIEW_MODE_TRACK) ? GUI_COLOR_WHITE
-                                   : (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? GUI_COLOR_MAGENTA
-                                                                            : GUI_COLOR_CYAN;
-        const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_marker(m_nextX, m_nextY, markerIndex, markerColor);
-        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-            m_currentX = m_nextX;
-            m_currentY = m_nextY;
-            m_visible = true;
-            m_phase = GUI_J_VIEW_PHASE_IDLE;
-            m_pending = false;
-        }
-        return true;
-    }
-
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (hmi_get(HMI_DATA_STAT_BL_ON) == 0U)) {
+    m_phase = GUI_J_VIEW_PHASE_IDLE;
+    m_pending = false;
     return false;
+  }
+
+  if (m_phase == GUI_J_VIEW_PHASE_DRAW) {
+    const uint8_t markerIndex = (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? 5U : 3U;
+    const uint16_t markerColor = (m_mode == GUI_J_VIEW_MODE_TRACK)        ? GUI_COLOR_WHITE
+                                 : (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? GUI_COLOR_MAGENTA
+                                                                          : GUI_COLOR_CYAN;
+    LCD_DrawMarker(m_nextX, m_nextY, markerIndex, markerColor);
+    {
+      m_currentX = m_nextX;
+      m_currentY = m_nextY;
+      m_visible = true;
+      m_phase = GUI_J_VIEW_PHASE_IDLE;
+      m_pending = false;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 void GUIJViewComponent::Exit(void) {
-    m_pending = false;
-    m_phase = GUI_J_VIEW_PHASE_IDLE;
-    m_visible = false;
+  m_pending = false;
+  m_phase = GUI_J_VIEW_PHASE_IDLE;
+  m_visible = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -388,7 +385,7 @@ void GUIJViewComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 uint8_t GUIHotKeyComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_HOT_KEY;
+  return (uint8_t)GUI_CLASS_HOT_KEY;
 }
 
 GUIHotKeyComponent::GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene)
@@ -400,13 +397,13 @@ void GUIHotKeyComponent::Enter(void) {
 }
 
 void GUIHotKeyComponent::Process(void) {
-    if (hmi_changed(m_idx) && (hmi_get(m_idx) != 0U) && (m_targetScene != nullptr)) {
-        GUISwitchScene(m_targetScene);
-    }
+  if (hmi_changed(m_idx) && (hmi_get(m_idx) != 0U) && (m_targetScene != nullptr)) {
+    GUISwitchScene(m_targetScene);
+  }
 }
 
 bool GUIHotKeyComponent::Send(void) {
-    return false;
+  return false;
 }
 
 void GUIHotKeyComponent::Exit(void) {
@@ -417,7 +414,7 @@ void GUIHotKeyComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 uint8_t GUILabelComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_LABEL;
+  return (uint8_t)GUI_CLASS_LABEL;
 }
 
 GUILabelComponent::GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const char* text)
@@ -429,31 +426,31 @@ GUILabelComponent::GUILabelComponent(uint8_t x, uint8_t y, uint16_t color, const
 }
 
 void GUILabelComponent::Enter(void) {
-    m_pending = true;
+  m_pending = true;
 }
 
 void GUILabelComponent::Process(void) {
 }
 
 bool GUILabelComponent::Send(void) {
-    if (!m_pending || !GUIIsLcdReady()) return false;
+  if (!m_pending) return false;
 
-    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, m_color, m_text);
-    if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-        m_pending = false;
-    }
-    return true;
+  (void)LCD_DrawText(m_x, m_y, m_color, m_text);
+  {
+    m_pending = false;
+  }
+  return true;
 }
 
 void GUILabelComponent::Exit(void) {
-    m_pending = false;
+  m_pending = false;
 }
 
 // -----------------------------------------------------------------------------
 // Section: GUIVarComponent
 // -----------------------------------------------------------------------------
 uint8_t GUIVarComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_VAR;
+  return (uint8_t)GUI_CLASS_VAR;
 }
 
 GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int32_t* value)
@@ -464,8 +461,8 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int
     m_value(value),
     m_hasDrawn(false),
     m_phase(PHASE_IDLE) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
 }
 
 GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const float* value)
@@ -476,8 +473,8 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const flo
     m_value(value),
     m_hasDrawn(false),
     m_phase(PHASE_IDLE) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
 }
 
 GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* value)
@@ -488,8 +485,8 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_value(value),
     m_hasDrawn(false),
     m_phase(PHASE_IDLE) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
 }
 
 GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* const* value)
@@ -500,8 +497,8 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* con
     m_value(value),
     m_hasDrawn(false),
     m_phase(PHASE_IDLE) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
 }
 
 GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const char* const* value)
@@ -512,83 +509,83 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_value(value),
     m_hasDrawn(false),
     m_phase(PHASE_IDLE) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
 }
 
 void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
-    if ((out == nullptr) || (outSize == 0U)) return;
-    out[0] = '\0';
-    if (m_value == nullptr) return;
+  if ((out == nullptr) || (outSize == 0U)) return;
+  out[0] = '\0';
+  if (m_value == nullptr) return;
 
-    switch (m_type) {
-        case VALUE_INT32:
-            (void)snprintf(out, outSize, "%ld", (long)(*static_cast<const int32_t*>(m_value)));
-            break;
-        case VALUE_FLOAT:
-            (void)snprintf(out, outSize, "%.2f", (double)(*static_cast<const float*>(m_value)));
-            break;
-        case VALUE_CSTR:
-            (void)snprintf(out, outSize, "%s", static_cast<const char*>(m_value));
-            break;
-        case VALUE_CSTR_PTR:
-        {
-            const char* const* textPtr = static_cast<const char* const*>(m_value);
-            const char* text = (textPtr != nullptr) ? *textPtr : nullptr;
-            (void)snprintf(out, outSize, "%s", (text != nullptr) ? text : "");
-            break;
-        }
-        default:
-            break;
-    }
-    out[outSize - 1U] = '\0';
+  switch (m_type) {
+    case VALUE_INT32:
+      (void)snprintf(out, outSize, "%ld", (long)(*static_cast<const int32_t*>(m_value)));
+      break;
+    case VALUE_FLOAT:
+      (void)snprintf(out, outSize, "%.2f", (double)(*static_cast<const float*>(m_value)));
+      break;
+    case VALUE_CSTR:
+      (void)snprintf(out, outSize, "%s", static_cast<const char*>(m_value));
+      break;
+    case VALUE_CSTR_PTR:
+      {
+        const char* const* textPtr = static_cast<const char* const*>(m_value);
+        const char* text = (textPtr != nullptr) ? *textPtr : nullptr;
+        (void)snprintf(out, outSize, "%s", (text != nullptr) ? text : "");
+        break;
+      }
+    default:
+      break;
+  }
+  out[outSize - 1U] = '\0';
 }
 
 void GUIVarComponent::Enter(void) {
-    m_drawnText[0] = '\0';
-    m_nextText[0] = '\0';
-    m_hasDrawn = false;
-    m_phase = PHASE_DRAW;
+  m_drawnText[0] = '\0';
+  m_nextText[0] = '\0';
+  m_hasDrawn = false;
+  m_phase = PHASE_DRAW;
 }
 
 void GUIVarComponent::Process(void) {
-    if (m_phase != PHASE_IDLE) return;
+  if (m_phase != PHASE_IDLE) return;
 
-    char text[sizeof(m_nextText)];
-    FormatValue(text, sizeof(text));
-    if (!m_hasDrawn || (strcmp(text, m_drawnText) != 0)) {
-        (void)snprintf(m_nextText, sizeof(m_nextText), "%s", text);
-        m_nextText[sizeof(m_nextText) - 1U] = '\0';
-        m_phase = m_hasDrawn ? PHASE_ERASE : PHASE_DRAW;
-    }
+  char text[sizeof(m_nextText)];
+  FormatValue(text, sizeof(text));
+  if (!m_hasDrawn || (strcmp(text, m_drawnText) != 0)) {
+    (void)snprintf(m_nextText, sizeof(m_nextText), "%s", text);
+    m_nextText[sizeof(m_nextText) - 1U] = '\0';
+    m_phase = m_hasDrawn ? PHASE_ERASE : PHASE_DRAW;
+  }
 }
 
 bool GUIVarComponent::Send(void) {
-    if ((m_phase == PHASE_IDLE) || !GUIIsLcdReady()) return false;
+  if (m_phase == PHASE_IDLE) return false;
 
-    if (m_phase == PHASE_ERASE) {
-        const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, GUI_COLOR_BLACK, m_drawnText);
-        if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-            m_phase = PHASE_DRAW;
-        }
-        return true;
-    }
-
-    if (!m_hasDrawn && (m_nextText[0] == '\0')) {
-        FormatValue(m_nextText, sizeof(m_nextText));
-    }
-    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, m_color, m_nextText);
-    if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-        (void)snprintf(m_drawnText, sizeof(m_drawnText), "%s", m_nextText);
-        m_drawnText[sizeof(m_drawnText) - 1U] = '\0';
-        m_hasDrawn = true;
-        m_phase = PHASE_IDLE;
+  if (m_phase == PHASE_ERASE) {
+    LCD_DrawText(m_x, m_y, GUI_COLOR_BLACK, m_drawnText);
+    {
+      m_phase = PHASE_DRAW;
     }
     return true;
+  }
+
+  if (!m_hasDrawn && (m_nextText[0] == '\0')) {
+    FormatValue(m_nextText, sizeof(m_nextText));
+  }
+  LCD_DrawText(m_x, m_y, m_color, m_nextText);
+  {
+    (void)snprintf(m_drawnText, sizeof(m_drawnText), "%s", m_nextText);
+    m_drawnText[sizeof(m_drawnText) - 1U] = '\0';
+    m_hasDrawn = true;
+    m_phase = PHASE_IDLE;
+  }
+  return true;
 }
 
 void GUIVarComponent::Exit(void) {
-    m_phase = PHASE_IDLE;
+  m_phase = PHASE_IDLE;
 }
 
 // -----------------------------------------------------------------------------
@@ -596,7 +593,7 @@ void GUIVarComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 uint8_t GUIMenuItemComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_MENU_ITEM;
+  return (uint8_t)GUI_CLASS_MENU_ITEM;
 }
 
 GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* text, gui_scene_t* targetScene)
@@ -611,139 +608,139 @@ GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* tex
 
 namespace {
 static GUIMenuItemComponent* GUIMenuItemCast(GUIComponent* component) {
-    if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
-        return static_cast<GUIMenuItemComponent*>(component);
-    }
-    return nullptr;
+  if ((component != nullptr) && (component->GetClassId() == (uint8_t)GUI_CLASS_MENU_ITEM)) {
+    return static_cast<GUIMenuItemComponent*>(component);
+  }
+  return nullptr;
 }
 
 static GUIMenuItemComponent* GUIMenuFindFirst(void) {
-    gui_scene_t* const scene = s_guiActiveScene;
-    if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
-        if (item != nullptr) return item;
-    }
-    return nullptr;
+  gui_scene_t* const scene = s_guiActiveScene;
+  if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
+    if (item != nullptr) return item;
+  }
+  return nullptr;
 }
 
 static GUIMenuItemComponent* GUIMenuFindAdjacent(const GUIMenuItemComponent* from, int step) {
-    gui_scene_t* const scene = s_guiActiveScene;
-    if ((scene == nullptr) || (scene->components == nullptr) || (from == nullptr) || (step == 0)) return nullptr;
+  gui_scene_t* const scene = s_guiActiveScene;
+  if ((scene == nullptr) || (scene->components == nullptr) || (from == nullptr) || (step == 0)) return nullptr;
 
-    int startIndex = -1;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        if (scene->components[i] == from) {
-            startIndex = (int)i;
-            break;
-        }
+  int startIndex = -1;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    if (scene->components[i] == from) {
+      startIndex = (int)i;
+      break;
     }
-    if (startIndex < 0) return nullptr;
+  }
+  if (startIndex < 0) return nullptr;
 
-    const int count = (int)scene->componentCount;
-    int index = startIndex;
-    for (int n = 0; n < count; ++n) {
-        index += step;
-        if (index < 0) index = count - 1;
-        else if (index >= count) index = 0;
+  const int count = (int)scene->componentCount;
+  int index = startIndex;
+  for (int n = 0; n < count; ++n) {
+    index += step;
+    if (index < 0) index = count - 1;
+    else if (index >= count) index = 0;
 
-        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[index]);
-        if (item != nullptr) return item;
-    }
-    return nullptr;
+    GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[index]);
+    if (item != nullptr) return item;
+  }
+  return nullptr;
 }
 }
 
 GUIMenuItemComponent* GUIMenuFindActive(void) {
-    gui_scene_t* const scene = s_guiActiveScene;
-    if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
-        if ((item != nullptr) && item->m_active) return item;
-    }
-    return nullptr;
+  gui_scene_t* const scene = s_guiActiveScene;
+  if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
+    if ((item != nullptr) && item->m_active) return item;
+  }
+  return nullptr;
 }
 
 void GUIMenuItemComponent::SetActive(bool active) {
-    if (m_active != active) {
-        m_active = active;
-        m_pending = true;
-    }
+  if (m_active != active) {
+    m_active = active;
+    m_pending = true;
+  }
 }
 
 bool GUIMenuItemComponent::ProcessNavigation(void) {
-    if (!m_prevActive) return false;
+  if (!m_prevActive) return false;
 
-    gui_scene_t* const scene = GUIGetActiveScene();
-    if (scene == nullptr) return false;
+  gui_scene_t* const scene = GUIGetActiveScene();
+  if (scene == nullptr) return false;
 
-    if (hmi_changed(HMI_DATA_BTN_UP) && (hmi_get(HMI_DATA_BTN_UP) != 0U)) {
-        GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
-        if ((next != nullptr) && (next != this)) {
-            SetActive(false);
-            next->SetActive(true);
-        }
-        return false;
+  if (hmi_changed(HMI_DATA_BTN_UP) && (hmi_get(HMI_DATA_BTN_UP) != 0U)) {
+    GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
+    if ((next != nullptr) && (next != this)) {
+      SetActive(false);
+      next->SetActive(true);
     }
-
-    if (hmi_changed(HMI_DATA_BTN_DOWN) && (hmi_get(HMI_DATA_BTN_DOWN) != 0U)) {
-        GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, 1);
-        if ((next != nullptr) && (next != this)) {
-            SetActive(false);
-            next->SetActive(true);
-        }
-        return false;
-    }
-
-    if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
-        GUISwitchScene(m_targetScene);
-        return (GUIGetActiveScene() != scene);
-    }
-
     return false;
+  }
+
+  if (hmi_changed(HMI_DATA_BTN_DOWN) && (hmi_get(HMI_DATA_BTN_DOWN) != 0U)) {
+    GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, 1);
+    if ((next != nullptr) && (next != this)) {
+      SetActive(false);
+      next->SetActive(true);
+    }
+    return false;
+  }
+
+  if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
+    GUISwitchScene(m_targetScene);
+    return (GUIGetActiveScene() != scene);
+  }
+
+  return false;
 }
 
 bool GUIMenuItemComponent::Draw(bool active) {
-    char text[32];
-    text[0] = active ? '>' : ' ';
-    text[1] = ' ';
-    if (m_text == nullptr) {
-        text[2] = '\0';
-    } else {
-        (void)snprintf(&text[2], sizeof(text) - 2U, "%s", m_text);
-        text[sizeof(text) - 1U] = '\0';
-    }
+  char text[32];
+  text[0] = active ? '>' : ' ';
+  text[1] = ' ';
+  if (m_text == nullptr) {
+    text[2] = '\0';
+  } else {
+    (void)snprintf(&text[2], sizeof(text) - 2U, "%s", m_text);
+    text[sizeof(text) - 1U] = '\0';
+  }
 
-    const uint16_t color = active ? GUI_COLOR_WHITE : GUI_COLOR_GRAY;
-    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, color, text);
-    if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-        m_pending = false;
-    }
-    return true;
+  const uint16_t color = active ? GUI_COLOR_WHITE : GUI_COLOR_GRAY;
+  LCD_DrawText(m_x, m_y, color, text);
+  {
+    m_pending = false;
+  }
+  return true;
 }
 
 void GUIMenuItemComponent::Enter(void) {
-    if ((GUIMenuFindActive() == nullptr) && (GUIMenuFindFirst() == this)) {
-        m_active = true;
-    }
-    m_prevActive = m_active;
-    m_pending = true;
+  if ((GUIMenuFindActive() == nullptr) && (GUIMenuFindFirst() == this)) {
+    m_active = true;
+  }
+  m_prevActive = m_active;
+  m_pending = true;
 }
 
 void GUIMenuItemComponent::Process(void) {
-    if (m_active != m_prevActive) m_pending = true;
-    (void)ProcessNavigation();
-    m_prevActive = m_active;
+  if (m_active != m_prevActive) m_pending = true;
+  (void)ProcessNavigation();
+  m_prevActive = m_active;
 }
 
 bool GUIMenuItemComponent::Send(void) {
-    if (!m_pending || !GUIIsLcdReady()) return false;
-    return Draw(m_active);
+  if (!m_pending) return false;
+  return Draw(m_active);
 }
 
 void GUIMenuItemComponent::Exit(void) {
-    m_pending = false;
-    m_prevActive = m_active;
+  m_pending = false;
+  m_prevActive = m_active;
 }
 
 // -----------------------------------------------------------------------------
@@ -752,20 +749,20 @@ void GUIMenuItemComponent::Exit(void) {
 
 namespace {
 static constexpr uint8_t GUI_BRIGHTNESS_STEP_TABLE[10] = {
-    1U, 2U, 3U, 5U, 8U, 13U, 22U, 36U, 61U, 127U
+  1U, 2U, 3U, 5U, 8U, 13U, 22U, 36U, 61U, 127U
 };
 
 static uint8_t GUIBrightnessToStep(uint8_t index) {
-    if (index > 9U) index = 9U;
-    return GUI_BRIGHTNESS_STEP_TABLE[index];
+  if (index > 9U) index = 9U;
+  return GUI_BRIGHTNESS_STEP_TABLE[index];
 }
 
 static void GUIBrightnessApply(uint8_t mode, uint8_t index) {
-    uint8_t step = GUIBrightnessToStep(index);
-    if (mode == 0U) {
-        step = (uint8_t)((step + 1U) / 2U);
-    }
-    hmi_cmd_set_brightness(step);
+  uint8_t step = GUIBrightnessToStep(index);
+  if (mode == 0U) {
+    step = (uint8_t)((step + 1U) / 2U);
+  }
+  hmi_cmd_set_brightness(step);
 }
 }
 
@@ -773,7 +770,7 @@ bool GUIBrightnessComponent::s_loaded = false;
 uint8_t GUIBrightnessComponent::s_storedIndex = 5U;
 
 uint8_t GUIBrightnessComponent::GetClassId(void) const {
-    return (uint8_t)GUI_CLASS_BRIGHTNESS;
+  return (uint8_t)GUI_CLASS_BRIGHTNESS;
 }
 
 GUIBrightnessComponent::GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t y)
@@ -785,84 +782,84 @@ GUIBrightnessComponent::GUIBrightnessComponent(uint8_t mode, uint8_t x, uint8_t 
 }
 
 void GUIBrightnessComponent::EnsureLoaded(void) {
-    if (s_loaded) return;
+  if (s_loaded) return;
 
-    Preferences prefs;
-    if (prefs.begin("gui", true)) {
-        const uint32_t value = prefs.getUInt("br_idx", 5U);
-        s_storedIndex = (value <= 9U) ? (uint8_t)value : 5U;
-        prefs.end();
-    } else {
-        s_storedIndex = 5U;
-    }
-    s_loaded = true;
+  Preferences prefs;
+  if (prefs.begin("gui", true)) {
+    const uint32_t value = prefs.getUInt("br_idx", 5U);
+    s_storedIndex = (value <= 9U) ? (uint8_t)value : 5U;
+    prefs.end();
+  } else {
+    s_storedIndex = 5U;
+  }
+  s_loaded = true;
 }
 
 bool GUIBrightnessComponent::SaveStoredIndex(uint8_t index) {
-    if (index > 9U) index = 9U;
+  if (index > 9U) index = 9U;
 
-    Preferences prefs;
-    if (!prefs.begin("gui", false)) return false;
+  Preferences prefs;
+  if (!prefs.begin("gui", false)) return false;
 
-    prefs.putUInt("br_idx", index);
-    prefs.end();
-    s_storedIndex = index;
-    return true;
+  prefs.putUInt("br_idx", index);
+  prefs.end();
+  s_storedIndex = index;
+  return true;
 }
 
 bool GUIBrightnessComponent::DrawValue(void) {
-    char text[4];
-    (void)snprintf(text, sizeof(text), "%u", (unsigned)m_actualIndex);
-    text[sizeof(text) - 1U] = '\0';
+  char text[4];
+  (void)snprintf(text, sizeof(text), "%u", (unsigned)m_actualIndex);
+  text[sizeof(text) - 1U] = '\0';
 
-    const hmi_cmd_result_t rc = hmi_cmd_lcd_draw_text(m_x, m_y, GUI_COLOR_ORANGE, text);
-    if ((rc == HMI_CMD_OK) || (rc == HMI_CMD_ERR_INVALID_ARG)) {
-        m_pendingDraw = false;
-    }
-    return true;
+  (void)LCD_DrawText(m_x, m_y, GUI_COLOR_ORANGE, text);
+  {
+    m_pendingDraw = false;
+  }
+  return true;
 }
 
 bool GUIBrightnessComponent::ProcessInput(void) {
-    if (m_mode != 1U) return false;
+  if (m_mode != 1U) return false;
 
-    bool changed = false;
-    if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U) && (m_actualIndex < 9U)) {
-        ++m_actualIndex;
-        changed = true;
-    }
-    if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U) && (m_actualIndex > 0U)) {
-        --m_actualIndex;
-        changed = true;
-    }
+  bool changed = false;
+  if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U) && (m_actualIndex < 9U)) {
+    ++m_actualIndex;
+    changed = true;
+  }
+  if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U) && (m_actualIndex > 0U)) {
+    --m_actualIndex;
+    changed = true;
+  }
 
-    if (changed) {
-        GUIBrightnessApply(m_mode, m_actualIndex);
-        m_pendingDraw = true;
-    }
-    return changed;
+  if (changed) {
+    GUIBrightnessApply(m_mode, m_actualIndex);
+    m_pendingDraw = true;
+  }
+  return changed;
 }
 
 void GUIBrightnessComponent::Enter(void) {
-    EnsureLoaded();
-    m_actualIndex = s_storedIndex;
-    GUIBrightnessApply(m_mode, m_actualIndex);
-    m_pendingDraw = (m_mode == 1U);
+  EnsureLoaded();
+  m_actualIndex = s_storedIndex;
+  GUIBrightnessApply(m_mode, m_actualIndex);
+  m_pendingDraw = (m_mode == 1U);
 }
 
 void GUIBrightnessComponent::Process(void) {
-    (void)ProcessInput();
+  (void)ProcessInput();
 }
 
 bool GUIBrightnessComponent::Send(void) {
-    if ((m_mode == 1U) && m_pendingDraw && GUIIsLcdReady()) return DrawValue();
-    return false;
+  if ((m_mode == 1U) && m_pendingDraw) return DrawValue();
+  return false;
 }
 
 void GUIBrightnessComponent::Exit(void) {
-    if (m_actualIndex != s_storedIndex) {
-        (void)SaveStoredIndex(m_actualIndex);
-    }
-    m_pendingDraw = false;
+  if (m_actualIndex != s_storedIndex) {
+    (void)SaveStoredIndex(m_actualIndex);
+  }
+  m_pendingDraw = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -870,67 +867,89 @@ void GUIBrightnessComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 static bool GUIHandleIdleHomeTimeout(void) {
-    if (hmi_get(HMI_DATA_BTN_ANYKEY) != 0U) {
-        s_guiLastActivityMs = millis();
-        return false;
-    }
-    if ((s_guiHomeScene == nullptr) || (s_guiActiveScene == nullptr) || (s_guiActiveScene == s_guiHomeScene)) return false;
-    const uint32_t now = millis();
-    if ((uint32_t)(now - s_guiLastActivityMs) < GUI_IDLE_HOME_TIMEOUT_MS) return false;
-    GUISwitchScene(s_guiHomeScene);
-    return true;
+  if (hmi_get(HMI_DATA_BTN_ANYKEY) != 0U) {
+    s_guiLastActivityMs = millis();
+    return false;
+  }
+  if ((s_guiHomeScene == nullptr) || (s_guiActiveScene == nullptr) || (s_guiActiveScene == s_guiHomeScene)) return false;
+  const uint32_t now = millis();
+  if ((uint32_t)(now - s_guiLastActivityMs) < GUI_IDLE_HOME_TIMEOUT_MS) return false;
+  GUISwitchScene(s_guiHomeScene);
+  return true;
 }
 
 static void GUISceneEnter(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component != nullptr) component->Enter();
-    }
+  if ((scene == nullptr) || (scene->components == nullptr)) return;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    GUIComponent* component = scene->components[i];
+    if (component != nullptr) component->Enter();
+  }
 }
 
 static void GUISceneLeave(gui_scene_t* scene) {
-    if ((scene == nullptr) || (scene->components == nullptr)) return;
-    for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component != nullptr) component->Exit();
-    }
+  if ((scene == nullptr) || (scene->components == nullptr)) return;
+  for (size_t i = 0U; i < scene->componentCount; ++i) {
+    GUIComponent* component = scene->components[i];
+    if (component != nullptr) component->Exit();
+  }
 }
 
 void GUISwitchScene(gui_scene_t* scene) {
-    if (s_guiActiveScene == scene) return;
-    GUISceneLeave(s_guiActiveScene);
-    s_guiActiveScene = scene;
-    GUISceneEnter(s_guiActiveScene);
+  if (s_guiActiveScene == scene) return;
+  GUISceneLeave(s_guiActiveScene);
+  s_guiActiveScene = scene;
+  GUISceneEnter(s_guiActiveScene);
 }
 
 void GUISetHomeScene(gui_scene_t* scene) {
-    s_guiHomeScene = scene;
-    s_guiLastActivityMs = millis();
+  s_guiHomeScene = scene;
+  s_guiLastActivityMs = millis();
 }
 
 gui_scene_t* GUIGetActiveScene(void) {
-    return s_guiActiveScene;
+  return s_guiActiveScene;
 }
 
-bool GUIServiceActiveScene(void) {
-    gui_scene_t* const scene = s_guiActiveScene;
-    if ((scene == nullptr) || (scene->components == nullptr)) return false;
-    if (GUIHandleIdleHomeTimeout()) return false;
-
+void GUIServiceActiveScene(void) {
+  gui_scene_t* const scene = s_guiActiveScene;
+  if ((scene != nullptr) && (scene->components != nullptr) && !GUIHandleIdleHomeTimeout()) {
     for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component == nullptr) continue;
-        component->Process();
-        if (s_guiActiveScene != scene) return false;
+      GUIComponent* component = scene->components[i];
+      if (component == nullptr) continue;
+      component->Process();
+      if (s_guiActiveScene != scene) return;
     }
 
-    bool sent = false;
     for (size_t i = 0U; i < scene->componentCount; ++i) {
-        GUIComponent* component = scene->components[i];
-        if (component == nullptr) continue;
-        if (!sent) sent = component->Send();
-        if (s_guiActiveScene != scene) return false;
+      GUIComponent* component = scene->components[i];
+      if (component == nullptr) continue;
+      component->Send();
+      if (s_guiActiveScene != scene) return;
     }
-    return sent;
+  }
+  for (uint8_t i = 0U; i < 2U; ++i) {
+    if (s_guiIndicatorPending[i]) {
+      (void)LCD_DrawIndicator(i, s_guiIndicatorValue[i] ? 1U : 0U);
+      s_guiIndicatorPending[i] = false;
+    }
+  }
+  const uint32_t now = millis();
+  for (uint8_t i = 0U; i < 4U; ++i) {
+    (void)LCD_DrawProgressBar(i, s_guiProgressValue[i]);
+  }
+
+  while (LCD_Process()) {}
+}
+
+void GUISetIndicator(uint8_t index, bool state) {
+  if (index >= 2U) return;
+  if ((s_guiIndicatorValue[index] != state) || s_guiIndicatorPending[index]) {
+    s_guiIndicatorValue[index] = state;
+    s_guiIndicatorPending[index] = true;
+  }
+}
+
+void GUISetProgress(uint8_t index, uint8_t value) {
+  if (index >= 4U) return;
+  s_guiProgressValue[index] = value;
 }

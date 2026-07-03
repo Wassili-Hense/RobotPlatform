@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "hmi.h"
 #include "gui.h"
+#include "st7735.h"
 #include "serial_bg.h"
 #include "pen_rc.h"
 
@@ -188,12 +189,12 @@ static void HandleVarI(const pen_rx_event_t& ev) {
     int32_t v = value*64/100;
     if (v < 0) v = 0;
     if (v > 64) v = 64;
-    hmi_cmd_lcd_set_progress(2U, (uint8_t)v);
+    GUISetProgress(2U, (uint8_t)v);
   } else if (varId == PEN_VAR_RSSI || varId == PEN_VAR_RSSL) {
     int32_t v = 100 + value;
     if (v < 0) v = 0;
     if (v > 64) v = 64;
-    hmi_cmd_lcd_set_progress(varId == PEN_VAR_RSSI ? 0U : 1U, (int8_t)v);
+    GUISetProgress(varId == PEN_VAR_RSSI ? 0U : 1U, (uint8_t)v);
     return;
   }
   if(!retry){
@@ -244,7 +245,7 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
 #ifdef MELODY 
       hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
 #endif
-      hmi_cmd_lcd_set_indicator(0U, true);
+      GUISetIndicator(0U, true);
       (void)AppPcTxLine("@LINK SECURE");
       s_usbConnPen = -1;  // resend
       break;
@@ -252,9 +253,9 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
 #ifdef MELODY
       hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
 #endif
-      hmi_cmd_lcd_set_indicator(0U, false);
-      hmi_cmd_lcd_set_progress(0U, 0U);
-      hmi_cmd_lcd_set_progress(1U, 0U);
+      GUISetIndicator(0U, false);
+      GUISetProgress(0U, 0U);
+      GUISetProgress(1U, 0U);
       (void)AppPcTxLine("@LINK LOST");
       break;
     case PEN_LINK_CONN_TO: 
@@ -284,7 +285,7 @@ static void HandleErrorEvent(const pen_rx_event_t& ev) {
   if (ev.data.error.code != PEN_HW_ERR_NONE) {
     char errText[8];
     snprintf(errText, sizeof(errText), "E%u", (unsigned)ev.data.error.code);
-    hmi_cmd_lcd_draw_text(120U, 15U, GUI_COLOR_ORANGE, errText);
+    LCD_DrawText(120U, 15U, GUI_COLOR_ORANGE, errText);
   }
 }
 
@@ -368,6 +369,7 @@ static void AppProcessHomePowerOff(void) {
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
   hmi_init(HmiLogToSerial);
+  LCD_Init();
   (void)pen_begin();
 #ifdef MELODY
   hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
@@ -392,15 +394,13 @@ void loop() {
       if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
         const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
         serial_bg_set_connected(connected);
-        hmi_cmd_lcd_set_indicator(1U, connected);
-        (void)pen_send_state(PEN_VAR_USBC_APP, connected ? 1L : 0L);
+        GUISetIndicator(1U, connected);
       }
       AppProcessHomePowerOff();
       AppProcessPenTx();
       //GUI
-      if (!GUIServiceActiveScene()) {
-        hmi_sysSend();
-      }
+      (void)GUIServiceActiveScene();
+      hmi_sysSend();
     }
   } 
   if(pen_receive(&ev)) {

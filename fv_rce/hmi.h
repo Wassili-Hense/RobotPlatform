@@ -67,13 +67,7 @@ void hmi_cmd_play_tone(uint16_t divider, uint16_t delay_ms);
 void hmi_cmd_play_melody(hmi_melody_t melody);
 void hmi_cmd_power_off(void);
 
-hmi_cmd_result_t hmi_cmd_lcd_clear(uint16_t rgb565_color);
-hmi_cmd_result_t hmi_cmd_lcd_set_bg(uint16_t rgb565_color);
-hmi_cmd_result_t hmi_cmd_lcd_draw_text(uint8_t x, uint8_t y, uint16_t rgb565_color, const char *text);
-hmi_cmd_result_t hmi_cmd_lcd_draw_marker(uint8_t x, uint8_t y, uint8_t index, uint16_t rgb565_color);
 
-void hmi_cmd_lcd_set_indicator(uint8_t index, bool state);
-void hmi_cmd_lcd_set_progress(uint8_t index, uint8_t value);
 
 #ifdef __cplusplus
 }
