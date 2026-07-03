@@ -11,9 +11,9 @@
 #include "hmi.h"
 #include "gui.h"
 #include "serial_bg.h"
-#include "pen_link.h"
+#include "pen_rc.h"
 
-//#define MELODY 1
+#define MELODY 1
 
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };

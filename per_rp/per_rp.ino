@@ -1,3 +1,4 @@
+//ESP32-D0WDQ6 (revision v1.1)
 #include <Arduino.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -6,7 +7,7 @@
 #include <stddef.h>
 
 #define PEN_RC 0
-#include "pen_link.h"
+#include "pen_rp.h"
 
 static constexpr uint32_t APP_SERIAL_BAUD = 115200U;
 static constexpr uint16_t APP_STREAM_TTL_MS = 500U;

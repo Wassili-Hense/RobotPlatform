@@ -4,9 +4,6 @@
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"
 
-#ifndef PEN_RC
-#define PEN_RC 0
-#endif
 #ifndef PEN_LINK_CORE_ID
 #define PEN_LINK_CORE_ID 1
 #endif
@@ -44,18 +41,11 @@ struct pen_rx_event_t {
     } data;
 };
 
-
 static constexpr uint32_t PEN_VAR_RSSI = PEN_VAR_ID4('R', 'S', 'S', 'I');
-#if PEN_RC
-static constexpr uint32_t PEN_VAR_RSSL = PEN_VAR_ID4('R', 'S', 'S', 'L');
-#endif
 
 bool pen_begin(void);
 bool pen_receive(pen_rx_event_t* ev);
 bool pen_is_connected(void);
-#if PEN_RC
-bool pen_send_get_var(uint32_t varId);
-#endif
 bool pen_send_stream(uint32_t varId, int32_t value, uint16_t ttlMs);
 bool pen_send_stream(uint32_t varId, float value, uint16_t ttlMs);
 bool pen_send_state(uint32_t varId, int32_t value);

@@ -38,11 +38,20 @@
 // - STREAM is used for frequent/current values and heartbeat. STREAM has no ACK.
 // - STATE is used for idempotent configuration/state exchange. STATE requires ACK.
 // - EVENT is reserved for non-idempotent events that must be delivered once.
-// - LSET, RSET and USBC are STATE variables, not EVENT variables.
 //
 // ACK/NACK:
 // - ACK confirms successful processing.
 // - NACK reports failed processing.
+//
+// GET_VAR:
+// - GET_VAR is a reliable request from RC to RP.
+// - RC stores GET_VAR in the reliable TX queue and retries it until ACK/NACK or
+//   retry timeout.
+// - RP answers ACK when the request has been accepted for processing.
+// - RP answers NACK immediately if the variable is not supported or the request
+//   cannot be accepted.
+// - ACK does not carry the variable value. The final value is returned later as
+//   STATE_I_VAR or STATE_F_VAR with the requested varId.
 // -----------------------------------------------------------------------------
 
 static constexpr uint8_t  PEN_MAGIC = 0xA7U;
@@ -78,7 +87,9 @@ enum pen_nack_reason_t : uint8_t {
     PEN_NACK_INVALID_VALUE   = 3U,
     PEN_NACK_NOT_ALLOWED     = 4U,
     PEN_NACK_BAD_SESSION     = 5U,
-    PEN_NACK_BAD_CRC         = 6U
+    PEN_NACK_BAD_CRC         = 6U,
+    PEN_NACK_TIMEOUT         = 7U,
+    PEN_NACK_BUSY            = 8U
 };
 
 #pragma pack(push, 1)

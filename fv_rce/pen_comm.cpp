@@ -1,4 +1,8 @@
-#include "pen_link.h"
+#ifndef PEN_COMM_IMPLEMENTATION
+#include "pen_comm.h"
+#else
+
+#include "pen_comm.h"
 #include "pen_proto.h"
 
 #include <WiFi.h>
@@ -14,12 +18,9 @@
 namespace {
 
 enum link_state_t : uint8_t {
-#if PEN_RC
   ST_DISCOVERY,
   ST_CONNECTING,
-#else
   ST_WAIT_RC,
-#endif
   ST_AUTHING,
   ST_SECURE_WAIT,
   ST_SECURE
@@ -113,11 +114,7 @@ static stream_cache_t s_streams[STREAM_CAP];
 static pending_tx_t s_pending[PENDING_CAP];
 static recent_rx_t s_recent[RECENT_CAP];
 
-#if PEN_RC
-static link_state_t s_state = ST_DISCOVERY;
-#else
 static link_state_t s_state = ST_WAIT_RC;
-#endif
 
 static uint8_t s_peerMac[6] = {};
 static bool s_peerValid = false;
@@ -149,6 +146,14 @@ static uint32_t s_reportedBadFrameCount = 0U;
 static uint32_t s_reportedAppDropCount = 0U;
 
 static void SetStreamIValue(uint32_t varId, int32_t value, uint16_t ttlMs, bool touchTxTime);
+static link_state_t RoleInitialState(void);
+static bool RoleDecodeFrameType(uint8_t t, frame_evt_t& ev);
+static void RoleClearSession(void);
+static void RoleInitIdentity(void);
+static void RoleTick(uint32_t now);
+static bool RoleProcessEvent(const frame_evt_t& ev);
+static void RolePrepareHeartbeatItem(stream_cache_t& item);
+static bool RoleAfterQueueRxVarI(const pen_var_i_payload_t* p, const frame_evt_t& ev, bool retry);
 
 static uint8_t MsgBase(uint8_t t) {
   return t & PEN_MSG_TYPE_MASK;
@@ -382,19 +387,13 @@ static void ClearSession(void) {
   memset(s_rcProof, 0, sizeof(s_rcProof));
   memset(s_devProof, 0, sizeof(s_devProof));
   memset(s_streams, 0, sizeof(s_streams));
-#if !PEN_RC
-  SetStreamIValue(PEN_VAR_RSSI, (int32_t)s_peerRssi, RSSI_TTL_MS, false);
-#endif
+  RoleClearSession();
   ClearReliable();
 }
 static void ResetLink(uint8_t reasonCode) {
   if (s_peerValid && MacSet(s_peerMac) && esp_now_is_peer_exist(s_peerMac)) (void)esp_now_del_peer(s_peerMac);
   ClearSession();
-#if PEN_RC
-  s_state = ST_DISCOVERY;
-#else
-  s_state = ST_WAIT_RC;
-#endif
+  s_state = RoleInitialState();
   s_lastTxMs = 0U;
   s_lastRxMs = 0U;
   s_stateStartMs = millis();
@@ -453,16 +452,8 @@ static bool DecodeFrame(frame_evt_t& ev) {
   ev.msgType = h->msgType;
   ev.seq = h->seq;
   ev.sessionId = h->sessionId;
-#if PEN_RC
-  if (t == MSG_DISCOVERY_RSP) ev.type = EVT_DISC_RSP;
-  else if (t == MSG_CONNECT_RSP) ev.type = EVT_CONN_RSP;
-  else if (t == MSG_AUTH_RSP) ev.type = EVT_AUTH_RSP;
-#else
-  if (t == MSG_DISCOVERY_REQ) ev.type = EVT_DISC_REQ;
-  else if (t == MSG_CONNECT_REQ) ev.type = EVT_CONN_REQ;
-  else if (t == MSG_AUTH_REQ) ev.type = EVT_AUTH_REQ;
-#endif
-  else if ((t == MSG_STREAM_I_VAR) || (t == MSG_STATE_I_VAR) || (t == MSG_EVENT_I_VAR)) ev.type = EVT_VAR_I;
+if (RoleDecodeFrameType(t, ev)) return true;
+  if ((t == MSG_STREAM_I_VAR) || (t == MSG_STATE_I_VAR) || (t == MSG_EVENT_I_VAR)) ev.type = EVT_VAR_I;
   else if ((t == MSG_STREAM_F_VAR) || (t == MSG_STATE_F_VAR) || (t == MSG_EVENT_F_VAR)) ev.type = EVT_VAR_F;
   else if (t == MSG_ACK) ev.type = EVT_ACK;
   else if (t == MSG_NACK) ev.type = EVT_NACK;
@@ -491,65 +482,6 @@ static bool SendNackTo(const uint8_t mac[6], uint16_t ackSeq, uint32_t varId, ui
   return ok;
 }
 
-#if PEN_RC
-static bool SendDiscovery(void) {
-  (void)AddPeer(PEN_BROADCAST_MAC, false, nullptr);
-  const bool ok = SendEmptyFrame(PEN_BROADCAST_MAC, MSG_DISCOVERY_REQ, 0U, s_seq++);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_DISCOVERY_REQ);
-  return ok;
-}
-static bool SendConnect(void) {
-  pen_connect_req_payload_t p = {};
-  p.rcId = s_rcId;
-  p.caps = PEN_CAPS;
-  memcpy(p.rcMac, s_ownMac, sizeof(p.rcMac));
-  memcpy(p.rcNonce, s_rcNonce, sizeof(p.rcNonce));
-  if (!AddPeer(s_peerMac, false, nullptr)) {
-    EmitError(PEN_HW_ERR_ESPNOW, MSG_CONNECT_REQ);
-    return false;
-  }
-  const bool ok = SendFrame(s_peerMac, MSG_CONNECT_REQ, 0U, s_seq++, p);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_CONNECT_REQ);
-  return ok;
-}
-static bool SendAuth(void) {
-  pen_auth_req_payload_t p = {};
-  memcpy(p.rcProof, s_rcProof, sizeof(p.rcProof));
-  const bool ok = SendFrame(s_peerMac, MSG_AUTH_REQ, s_sessionId, s_seq++, p);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_AUTH_REQ);
-  return ok;
-}
-#else
-static bool SendDiscoveryResponse(const uint8_t mac[6]) {
-  pen_discovery_rsp_payload_t p = {};
-  p.deviceId = s_deviceId;
-  p.caps = PEN_CAPS;
-  p.workChannel = PEN_CHANNEL;
-  memcpy(p.name, "PEN-RP", 6U);
-  (void)AddPeer(mac, false, nullptr);
-  const bool ok = SendFrame(mac, MSG_DISCOVERY_RSP, 0U, s_seq++, p);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_DISCOVERY_RSP);
-  return ok;
-}
-static bool SendConnectResponse(void) {
-  pen_connect_rsp_payload_t p = {};
-  p.deviceId = s_deviceId;
-  p.caps = PEN_CAPS;
-  p.sessionId = s_sessionId;
-  memcpy(p.devMac, s_ownMac, sizeof(p.devMac));
-  memcpy(p.devNonce, s_devNonce, sizeof(p.devNonce));
-  const bool ok = SendFrame(s_peerMac, MSG_CONNECT_RSP, 0U, s_seq++, p);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_CONNECT_RSP);
-  return ok;
-}
-static bool SendAuthResponse(void) {
-  pen_auth_rsp_payload_t p = {};
-  memcpy(p.devProof, s_devProof, sizeof(p.devProof));
-  const bool ok = SendFrame(s_peerMac, MSG_AUTH_RSP, s_sessionId, s_seq++, p);
-  if (!ok) EmitError(PEN_HW_ERR_SEND, MSG_AUTH_RSP);
-  return ok;
-}
-#endif
 
 static bool InstallEncryptedPeer(void) {
   if (esp_now_set_pmk(s_pmk) != ESP_OK) {
@@ -658,11 +590,7 @@ static bool SendHeartbeat(uint32_t now) {
     s_streams[pick].lastTxMs = now;
   }
   portEXIT_CRITICAL(&s_mux);
-#if !PEN_RC
-  if(item.varId == PEN_VAR_RSSI){
-    item.value.iValue = (int32_t)s_peerRssi;
-  }
-#endif
+  RolePrepareHeartbeatItem(item);
   if (pick >= 0) return item.isFloat ? SendStreamFRaw(item.varId, item.value.fValue, true) : SendStreamIRaw(item.varId, item.value.iValue, true);
   if ((oldest < 0) && ((now - s_lastTxMs) >= HEARTBEAT_MS)) return SendStreamIRaw(PEN_VAR_HB, (int32_t)(++s_hbCounter), true);
   return true;
@@ -719,10 +647,34 @@ static bool PendingAddF(uint8_t msgType, uint16_t seq, uint32_t varId, float val
   portEXIT_CRITICAL(&s_mux);
   return false;
 }
+static bool PendingAddGet(uint16_t seq, uint32_t varId, uint32_t now) {
+  portENTER_CRITICAL(&s_mux);
+  for (size_t i = 0; i < PENDING_CAP; ++i)
+    if (!s_pending[i].used) {
+      s_pending[i].used = true;
+      s_pending[i].isFloat = false;
+      s_pending[i].msgType = MSG_GET_VAR;
+      s_pending[i].seq = seq;
+      s_pending[i].ttlMs = 0U;
+      s_pending[i].varId = varId;
+      s_pending[i].lastTxMs = now;
+      s_pending[i].retryCount = 0U;
+      s_pending[i].value.iValue = 0;
+      portEXIT_CRITICAL(&s_mux);
+      return true;
+    }
+  portEXIT_CRITICAL(&s_mux);
+  return false;
+}
+
 static bool ResendPending(const pending_tx_t& item, uint32_t now) {
   const uint8_t rt = MsgMake(item.msgType, true);
   bool ok;
-  if (item.isFloat) {
+  if (MsgBase(item.msgType) == MSG_GET_VAR) {
+    pen_get_var_payload_t p = {};
+    p.varId = item.varId;
+    ok = SendFrame(s_peerMac, rt, s_sessionId, item.seq, p);
+  } else if (item.isFloat) {
     pen_var_f_payload_t p = {};
     p.varId = item.varId;
     p.value = item.value.fValue;
@@ -737,6 +689,7 @@ static bool ResendPending(const pending_tx_t& item, uint32_t now) {
   else EmitError(PEN_HW_ERR_SEND, item.msgType);
   return ok;
 }
+
 static void ProcessPending(uint32_t now) {
   for (size_t i = 0; i < PENDING_CAP; ++i) {
     pending_tx_t item = {};
@@ -838,10 +791,7 @@ static bool QueueRxVarI(const pen_var_i_payload_t* p, const frame_evt_t& ev, boo
   if (p == nullptr) return false;
   if (p->varId == PEN_VAR_HB) return true;
   if (!EmitVarI(ev.msgType, p->varId, p->value, retry)) return false;
-#if PEN_RC
-  if (p->varId == PEN_VAR_RSSI) return EmitVarI(MSG_STREAM_I_VAR, PEN_VAR_RSSL, (int32_t)ev.rssi, retry);
-#endif
-  return true;
+  return RoleAfterQueueRxVarI(p, ev, retry);
 }
 static bool QueueRxVarF(const pen_var_f_payload_t* p, const frame_evt_t& ev, bool retry) {
   return (p != nullptr) && EmitVarF(ev.msgType, p->varId, p->value, retry);
@@ -907,86 +857,25 @@ static void HandleNack(const frame_evt_t& ev) {
 }
 static void HandleGetVar(const frame_evt_t& ev) {
   const auto* p = reinterpret_cast<const pen_get_var_payload_t*>(Payload(ev));
+  if (MsgRetry(ev.msgType) && RecentSeen(ev.msgType, ev.seq, p->varId)) {
+    (void)SendAckTo(ev.mac, ev.seq, p->varId);
+    return;
+  }
   pen_rx_event_t out = {};
   out.type = PEN_RX_GET_VAR;
   out.msgType = MSG_GET_VAR;
   out.data.getVar.varId = p->varId;
-  (void)QueueApp(out);
+  if (QueueApp(out)) {
+    RecentRemember(ev.msgType, ev.seq, p->varId);
+    (void)SendAckTo(ev.mac, ev.seq, p->varId);
+  } else {
+    (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_BUSY);
+  }
 }
 
 static void ProcessEvent(const frame_evt_t& ev) {
   s_peerRssi = ev.rssi;
-#if PEN_RC
-  if ((ev.type == EVT_DISC_RSP) && (s_state == ST_DISCOVERY)) {
-    const auto* p = reinterpret_cast<const pen_discovery_rsp_payload_t*>(Payload(ev));
-    memcpy(s_peerMac, ev.mac, 6U);
-    s_peerValid = true;
-    s_deviceId = p->deviceId;
-    memcpy(s_devMac, ev.mac, 6U);
-    esp_fill_random(s_rcNonce, sizeof(s_rcNonce));
-    (void)EmitLink(PEN_LINK_DISC, ev.rssi);
-    s_state = ST_CONNECTING;
-    s_stateStartMs = millis();
-    s_lastTxMs = 0U;
-  } else if ((ev.type == EVT_CONN_RSP) && (s_state == ST_CONNECTING) && (memcmp(ev.mac, s_peerMac, 6U) == 0)) {
-    const auto* p = reinterpret_cast<const pen_connect_rsp_payload_t*>(Payload(ev));
-    if ((ev.sessionId != 0U) || (memcmp(p->devMac, ev.mac, 6U) != 0)) {
-      ResetLink(PEN_LINK_MAC_BAD);
-      return;
-    }
-    memcpy(s_devMac, p->devMac, sizeof(s_devMac));
-    s_deviceId = p->deviceId;
-    s_sessionId = p->sessionId;
-    memcpy(s_devNonce, p->devNonce, sizeof(s_devNonce));
-    DeriveSession(s_rcId, s_deviceId, s_sessionId, s_ownMac, s_devMac, s_rcNonce, s_devNonce, s_sessionKey, s_pmk, s_lmk, s_rcProof, s_devProof);
-    s_state = ST_AUTHING;
-    s_stateStartMs = millis();
-    s_lastTxMs = 0U;
-    (void)EmitLink(PEN_LINK_CONNECTED);
-  } else if ((ev.type == EVT_AUTH_RSP) && (s_state == ST_AUTHING) && (memcmp(ev.mac, s_peerMac, 6U) == 0)) {
-    const auto* p = reinterpret_cast<const pen_auth_rsp_payload_t*>(Payload(ev));
-    if ((ev.sessionId == s_sessionId) && (memcmp(p->devProof, s_devProof, 16U) == 0)) {
-      (void)EmitLink(PEN_LINK_AUTH_OK);
-      (void)SendAckTo(ev.mac, ev.seq, 0U);
-      s_state = ST_SECURE_WAIT;
-      s_secureInstallAtMs = millis() + SECURE_DELAY_MS;
-    } else ResetLink(PEN_LINK_AUTH_BAD);
-  } else
-#else
-  if (ev.type == EVT_DISC_REQ) {
-    (void)SendDiscoveryResponse(ev.mac);
-    (void)EmitLink(PEN_LINK_DISC, ev.rssi);
-  } else if ((ev.type == EVT_CONN_REQ) && ((s_state == ST_WAIT_RC) || (s_state == ST_AUTHING))) {
-    const auto* p = reinterpret_cast<const pen_connect_req_payload_t*>(Payload(ev));
-    memcpy(s_peerMac, ev.mac, 6U);
-    memcpy(s_rcMac, p->rcMac, sizeof(s_rcMac));
-    memcpy(s_devMac, s_ownMac, sizeof(s_devMac));
-    memcpy(s_rcNonce, p->rcNonce, sizeof(s_rcNonce));
-    s_peerValid = true;
-    s_rcId = p->rcId;
-    s_sessionId = esp_random();
-    if (s_sessionId == 0U) s_sessionId = 1U;
-    esp_fill_random(s_devNonce, sizeof(s_devNonce));
-    if (!AddPeer(s_peerMac, false, nullptr)) {
-      EmitError(PEN_HW_ERR_ESPNOW, MSG_CONNECT_RSP);
-      return;
-    }
-    DeriveSession(s_rcId, s_deviceId, s_sessionId, s_rcMac, s_devMac, s_rcNonce, s_devNonce, s_sessionKey, s_pmk, s_lmk, s_rcProof, s_devProof);
-    s_state = ST_AUTHING;
-    s_stateStartMs = millis();
-    s_lastTxMs = millis();
-    (void)SendConnectResponse();
-    (void)EmitLink(PEN_LINK_CONNECTED);
-  } else if ((ev.type == EVT_AUTH_REQ) && (s_state == ST_AUTHING) && (memcmp(ev.mac, s_peerMac, 6U) == 0)) {
-    const auto* p = reinterpret_cast<const pen_auth_req_payload_t*>(Payload(ev));
-    if ((ev.sessionId == s_sessionId) && (memcmp(p->rcProof, s_rcProof, 16U) == 0)) {
-      (void)EmitLink(PEN_LINK_AUTH_OK);
-      (void)SendAuthResponse();
-      s_state = ST_SECURE_WAIT;
-      s_secureInstallAtMs = millis() + SECURE_DELAY_MS;
-    } else ResetLink(PEN_LINK_AUTH_BAD);
-  } else
-#endif
+  if (RoleProcessEvent(ev)) return;
   if (!IsSecurePeer(ev)) return;
   else if (ev.type == EVT_VAR_I) HandleVarI(ev);
   else if (ev.type == EVT_VAR_F) HandleVarF(ev);
@@ -1055,40 +944,15 @@ static void MainTask(void*) {
     vTaskDelete(nullptr);
     return;
   }
-#if PEN_RC
-  s_rcId = MakeId();
-#else
-  s_deviceId = MakeId();
-#endif
+  RoleInitIdentity();
   (void)EmitLink(PEN_LINK_READY);
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     DrainFrames();
     ReportCounters();
     const uint32_t now = millis();
-#if PEN_RC
-    if ((s_state == ST_DISCOVERY) && ((now - s_lastTxMs) >= DISCOVERY_MS)) {
-      s_lastTxMs = now;
-      (void)SendDiscovery();
-    } else if (s_state == ST_CONNECTING) {
-      if ((now - s_stateStartMs) > AUTH_TIMEOUT_MS) ResetLink(PEN_LINK_CONN_TO);
-      else if ((now - s_lastTxMs) >= RETRY_MS) {
-        s_lastTxMs = now;
-        (void)SendConnect();
-      }
-    } else
-#endif
-      if (s_state == ST_AUTHING) {
-#if PEN_RC
-      if ((now - s_stateStartMs) > AUTH_TIMEOUT_MS) ResetLink(PEN_LINK_AUTH_TO);
-      else if ((now - s_lastTxMs) >= RETRY_MS) {
-        s_lastTxMs = now;
-        (void)SendAuth();
-      }
-#else
-      if ((now - s_stateStartMs) > AUTH_TIMEOUT_MS) ResetLink(PEN_LINK_AUTH_TO);
-#endif
-    } else if (s_state == ST_SECURE_WAIT) {
+RoleTick(now);
+    if (s_state == ST_SECURE_WAIT) {
       if ((s_secureInstallAtMs != 0U) && ((int32_t)(now - s_secureInstallAtMs) >= 0)) {
         if (!InstallEncryptedPeer()) ResetLink(PEN_LINK_SEC_BAD);
       }
@@ -1112,11 +976,7 @@ bool pen_begin(void) {
   s_appHead = 0U;
   s_appTail = 0U;
   ClearSession();
-#if PEN_RC
-  s_state = ST_DISCOVERY;
-#else
-  s_state = ST_WAIT_RC;
-#endif
+  s_state = RoleInitialState();
   s_seq = 1U;
   s_hbCounter = 0U;
   s_lastTxMs = 0U;
@@ -1152,17 +1012,6 @@ bool pen_is_connected(void) {
   return s_state == ST_SECURE;
 }
 
-#if PEN_RC
-bool pen_send_get_var(uint32_t varId) {
-  if (!pen_is_connected()) return false;
-  pen_get_var_payload_t p = {};
-  p.varId = varId;
-  const bool ok = SendFrame(s_peerMac, MSG_GET_VAR, s_sessionId, s_seq++, p);
-  if (ok) s_lastTxMs = millis();
-  else EmitError(PEN_HW_ERR_SEND, MSG_GET_VAR);
-  return ok;
-}
-#endif
 
 bool pen_send_stream(uint32_t varId, int32_t value, uint16_t ttlMs) {
   return SendVarI(MSG_STREAM_I_VAR, varId, value, ttlMs);
@@ -1182,3 +1031,4 @@ bool pen_send_event(uint32_t varId, int32_t value) {
 bool pen_send_event(uint32_t varId, float value) {
   return SendVarF(MSG_EVENT_F_VAR, varId, value, 0U);
 }
+#endif  // PEN_COMM_IMPLEMENTATION
