@@ -13,7 +13,7 @@
 #include "serial_bg.h"
 #include "pen_link.h"
 
-#define MELODY 1
+//#define MELODY 1
 
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
@@ -68,18 +68,9 @@ static constexpr uint32_t PEN_VAR_BATP_APP = PEN_VAR_ID4('B', 'A', 'T', 'P');
 static constexpr uint32_t PEN_VAR_LSET_APP = PEN_VAR_ID4('L', 'S', 'E', 'T');
 static constexpr uint32_t PEN_VAR_RSET_APP = PEN_VAR_ID4('R', 'S', 'E', 'T');
 static constexpr uint32_t PEN_VAR_USBC_APP = PEN_VAR_ID4('U', 'S', 'B', 'C');
-// [App constants]
-static constexpr uint32_t APP_TASK_PERIOD_MS = 5U;
-static constexpr uint32_t APP_HOME_POWER_OFF_TIMEOUT_MS = 5UL * 60UL * 1000UL;
-static constexpr BaseType_t APP_TASK_CORE_ID = 1;
-static constexpr UBaseType_t APP_TASK_PRIORITY = 2;
-static constexpr uint32_t APP_TASK_STACK_SIZE = 4096U;
 
 static TaskHandle_t s_appTaskHandle = nullptr;
-static uint32_t s_homeLastActivityMs = 0U;
-static bool s_homePowerOffWarn15Done = false;
-static bool s_homePowerOffWarn5Done = false;
-static bool s_homePowerOffQueued = false;
+static TaskHandle_t s_rxTaskHandle = nullptr;
 static int32_t s_usbConnPen;
 
 // [Log]
@@ -192,10 +183,9 @@ static void HandleVarI(const pen_rx_event_t& ev) {
   const uint32_t varId = ev.data.varI.varId;
   const int32_t value = ev.data.varI.value;
   const bool retry = ev.data.varI.retry;
-  if (retry && (varId != PEN_VAR_RSSI) && (varId != PEN_VAR_RSSL)) return;
 
-  if (varId == PEN_VAR_BATP_APP) {
-    int32_t v = value;
+  if (varId == PEN_VAR_BATP_APP && !retry) {
+    int32_t v = value*64/100;
     if (v < 0) v = 0;
     if (v > 64) v = 64;
     hmi_cmd_lcd_set_progress(2U, (uint8_t)v);
@@ -206,8 +196,9 @@ static void HandleVarI(const pen_rx_event_t& ev) {
     hmi_cmd_lcd_set_progress(varId == PEN_VAR_RSSI ? 0U : 1U, (int8_t)v);
     return;
   }
-
-  AppEmitVarI(varId, value);
+  if(!retry){
+    AppEmitVarI(varId, value);
+  }
 }
 
 static void HandleVarF(const pen_rx_event_t& ev) {
@@ -312,9 +303,7 @@ static bool AppPenRxEvent(const pen_rx_event_t* ev) {
 }
 
 static void AppProcessPenTx(void) {
-  if (!pen_is_connected()) {
-    return;
-  }
+  if (!pen_is_connected()) return;
 
   if (hmi_changed(HMI_DATA_JOY_X)) {
     const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
@@ -376,15 +365,29 @@ static void AppProcessHomePowerOff(void) {
   }
 }
 
-// [AppTask]
-static void AppTask(void* arg) {
-  (void)arg;
+void setup() {
+  (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
+  hmi_init(HmiLogToSerial);
+  (void)pen_begin();
+#ifdef MELODY
+  hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
+#else
+  hmi_cmd_play_tone(200, 50);
+#endif
+  GUISetHomeScene(&s_sceneHome);
+  GUISwitchScene(&s_sceneHome);
+  vTaskPrioritySet(xTaskGetHandle("loopTask"), 2);
+}
 
-  TickType_t lastWakeTime = xTaskGetTickCount();
-  const TickType_t periodTicks = pdMS_TO_TICKS(APP_TASK_PERIOD_MS);
+void loop() {
+  static TickType_t lastHmiTick = 0;
+  static char line[SERIAL_BG_LINE_CAP];
 
-  for (;;) {
-    // HMI
+  pen_rx_event_t ev = {};
+  TickType_t now = xTaskGetTickCount();
+
+  if(now - lastHmiTick >= pdMS_TO_TICKS(5)){
+    lastHmiTick = now;
     if (hmi_tick() == HMI_TICK_OK) {
       if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
         const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
@@ -398,33 +401,13 @@ static void AppTask(void* arg) {
       if (!GUIServiceActiveScene()) {
         hmi_sysSend();
       }
-      //Serial
-      {
-        char line[SERIAL_BG_LINE_CAP];
-
-        if (serial_bg_receive_line(line, sizeof(line))) {
-          (void)pen_pc_rx_line(line);
-        }
-      }
     }
-    (void)xTaskDelayUntil(&lastWakeTime, periodTicks);
+  } 
+  if(pen_receive(&ev)) {
+    (void)AppPenRxEvent(&ev);
   }
-}
-
-void setup() {
-  (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
-  hmi_init(HmiLogToSerial);
-  (void)pen_begin(AppPenRxEvent);
-#ifdef MELODY
-  hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
-#else
-  hmi_cmd_play_tone(200, 50);
-#endif
-  GUISetHomeScene(&s_sceneHome);
-  GUISwitchScene(&s_sceneHome);
-  (void)xTaskCreatePinnedToCore(AppTask, "AppTask", 4096U, nullptr, 2, &s_appTaskHandle, 1);
-}
-
-void loop() {
-  vTaskDelay(pdMS_TO_TICKS(1000U));
+  if (serial_bg_receive_line(line, sizeof(line))) {
+    (void)pen_pc_rx_line(line);
+  } 
+  vTaskDelay(1);
 }

@@ -11,7 +11,7 @@
 #endif
 
 #ifndef SERIAL_BG_QUEUE_DEPTH
-#define SERIAL_BG_QUEUE_DEPTH 8U
+#define SERIAL_BG_QUEUE_DEPTH 16U
 #endif
 
 bool serial_bg_begin(uint32_t baud = 115200U,

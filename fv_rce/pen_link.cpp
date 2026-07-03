@@ -104,7 +104,6 @@ static constexpr uint16_t RSSI_TTL_MS = 1000U;
 static constexpr uint32_t PEN_VAR_HB = PEN_VAR_ID2('H', 'B');
 
 static TaskHandle_t s_mainTask = nullptr;
-static TaskHandle_t s_rxTask = nullptr;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static frame_evt_t s_frameQ[FRAME_Q_CAP];
 static pen_rx_event_t s_appQ[APP_Q_CAP];
@@ -113,7 +112,6 @@ static volatile uint8_t s_appTail = 0U;
 static stream_cache_t s_streams[STREAM_CAP];
 static pending_tx_t s_pending[PENDING_CAP];
 static recent_rx_t s_recent[RECENT_CAP];
-static pen_rx_event_fn_t s_rxEvent = nullptr;
 
 #if PEN_RC
 static link_state_t s_state = ST_DISCOVERY;
@@ -1031,22 +1029,6 @@ static void ReportCounters(void) {
     s_reportedAppDropCount = ad;
   }
 }
-static void RxTask(void*) {
-  for (;;) {
-    pen_rx_event_t ev = {};
-    bool has = false;
-    portENTER_CRITICAL(&s_mux);
-    if (s_appTail != s_appHead) {
-      ev = s_appQ[s_appTail];
-      s_appTail = (uint8_t)((s_appTail + 1U) % APP_Q_CAP);
-      has = true;
-    }
-    portEXIT_CRITICAL(&s_mux);
-    if (has && (s_rxEvent != nullptr)) (void)s_rxEvent(&ev);
-    else vTaskDelay(pdMS_TO_TICKS(10U));
-  }
-}
-
 static void MainTask(void*) {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(false, true);
@@ -1123,9 +1105,8 @@ static void MainTask(void*) {
 
 }  // namespace
 
-bool pen_begin(pen_rx_event_fn_t rxEventFn) {
+bool pen_begin(void) {
   if (s_mainTask != nullptr) return true;
-  s_rxEvent = rxEventFn;
   memset(s_frameQ, 0, sizeof(s_frameQ));
   memset(s_appQ, 0, sizeof(s_appQ));
   s_appHead = 0U;
@@ -1148,13 +1129,23 @@ bool pen_begin(pen_rx_event_fn_t rxEventFn) {
   s_reportedFrameDropCount = 0U;
   s_reportedBadFrameCount = 0U;
   s_reportedAppDropCount = 0U;
-  if (xTaskCreatePinnedToCore(RxTask, "PEN_RX", PEN_LINK_RX_TASK_STACK, nullptr, PEN_LINK_RX_TASK_PRIORITY, &s_rxTask, PEN_LINK_CORE_ID) != pdPASS) return false;
   if (xTaskCreatePinnedToCore(MainTask, "PEN", PEN_LINK_TASK_STACK, nullptr, PEN_LINK_TASK_PRIORITY, &s_mainTask, PEN_LINK_CORE_ID) != pdPASS) {
-    vTaskDelete(s_rxTask);
-    s_rxTask = nullptr;
     return false;
   }
   return true;
+}
+
+bool pen_receive(pen_rx_event_t* ev) {
+  if (ev == nullptr) return false;
+  bool has = false;
+  portENTER_CRITICAL(&s_mux);
+  if (s_appTail != s_appHead) {
+    *ev = s_appQ[s_appTail];
+    s_appTail = (uint8_t)((s_appTail + 1U) % APP_Q_CAP);
+    has = true;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return has;
 }
 
 bool pen_is_connected(void) {

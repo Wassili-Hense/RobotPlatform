@@ -13,14 +13,8 @@
 #ifndef PEN_LINK_TASK_PRIORITY
 #define PEN_LINK_TASK_PRIORITY 2
 #endif
-#ifndef PEN_LINK_RX_TASK_PRIORITY
-#define PEN_LINK_RX_TASK_PRIORITY 1
-#endif
 #ifndef PEN_LINK_TASK_STACK
 #define PEN_LINK_TASK_STACK 4096U
-#endif
-#ifndef PEN_LINK_RX_TASK_STACK
-#define PEN_LINK_RX_TASK_STACK 4096U
 #endif
 
 #define PEN_VAR_ID4(a, b, c, d) \
@@ -50,14 +44,14 @@ struct pen_rx_event_t {
     } data;
 };
 
-typedef bool (*pen_rx_event_fn_t)(const pen_rx_event_t* ev);
 
 static constexpr uint32_t PEN_VAR_RSSI = PEN_VAR_ID4('R', 'S', 'S', 'I');
 #if PEN_RC
 static constexpr uint32_t PEN_VAR_RSSL = PEN_VAR_ID4('R', 'S', 'S', 'L');
 #endif
 
-bool pen_begin(pen_rx_event_fn_t rxEventFn);
+bool pen_begin(void);
+bool pen_receive(pen_rx_event_t* ev);
 bool pen_is_connected(void);
 #if PEN_RC
 bool pen_send_get_var(uint32_t varId);

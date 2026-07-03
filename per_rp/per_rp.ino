@@ -146,7 +146,7 @@ static bool PenRxEvent(const pen_rx_event_t* ev) {
   return true;
 }
 
-static bool ProcessSerialLine(const char* line) {
+static bool SerialProcessLine(const char* line) {
   if (line == nullptr) return false;
   char buf[APP_LINE_CAP];
   strncpy(buf, line, sizeof(buf) - 1U);
@@ -173,14 +173,14 @@ static bool ProcessSerialLine(const char* line) {
   return pen_send_stream(varId, (int32_t)value, APP_STREAM_TTL_MS);
 }
 
-static void ProcessSerialRx(void) {
+static bool SerialReadLine() {
   while (Serial.available() > 0) {
     const char c = (char)Serial.read();
     if ((c == '\r') || (c == '\n')) {
       if (s_lineLen > 0U) {
         s_line[s_lineLen] = '\0';
-        if (!ProcessSerialLine(s_line)) Serial.println("@ERR SERIAL");
         s_lineLen = 0U;
+        return true;
       }
     } else if (s_lineLen < (sizeof(s_line) - 1U)) {
       s_line[s_lineLen++] = c;
@@ -189,6 +189,7 @@ static void ProcessSerialRx(void) {
       Serial.println("@ERR LINE_OVF");
     }
   }
+  return false;
 }
 
 void setup() {
@@ -197,10 +198,19 @@ void setup() {
     delay(10);
   }
   Serial.println("@BOOT RP");
-  (void)pen_begin(PenRxEvent);
+  (void)pen_begin();
 }
 
 void loop() {
-  ProcessSerialRx();
-  delay(5);
+  pen_rx_event_t ev = {};
+
+  if(SerialReadLine()){
+    if (!SerialProcessLine(s_line)){
+      Serial.println("@ERR SERIAL");
+    }
+  } else if(pen_receive(&ev)) {
+    PenRxEvent(&ev);
+  } else {
+    delay(5);
+  }
 }
