@@ -30,22 +30,16 @@ Packet bytes:
   - bits[3:0] = ADC X bits[11:8]
   - bits[6:4] = reserved, 0
   - bit7 = ADC X changed flag
-  - master reconstructs ADC X as: `((Byte3 & 0x0F) << 8) | Byte2`
-  - changed flag: `(Byte3 & 0x80) != 0`
 - Byte4 = ADC Y low byte
 - Byte5 = ADC Y high/status byte
   - bits[3:0] = ADC Y bits[11:8]
   - bits[6:4] = reserved, 0
   - bit7 = ADC Y changed flag
-  - master reconstructs ADC Y as: `((Byte5 & 0x0F) << 8) | Byte4`
-  - changed flag: `(Byte5 & 0x80) != 0`
-- Byte6 = ADC U low byte
-- Byte7 = ADC U high/status byte
-  - bits[3:0] = ADC U bits[11:8]
+- Byte6 = ADC V low byte
+- Byte7 = ADC V high/status byte
+  - bits[3:0] = ADC V bits[11:8]
   - bits[6:4] = reserved, 0
-  - bit7 = ADC U changed flag
-  - master reconstructs ADC U as: `((Byte7 & 0x0F) << 8) | Byte6`
-  - changed flag: `(Byte7 & 0x80) != 0`
+  - bit7 = ADC V changed flag
 
 Buttons bit = 1 means button pressed.
 

@@ -37,8 +37,7 @@ static const uint16_t *s_melodyData = 0;
 static uint8_t s_melodyLength = 0U;
 static uint8_t s_melodyIndex = 0U;
 static uint32_t s_lastAppTick = 0U;
-static volatile uint8_t s_i2cPacket[APP_I2C_PACKET_SIZE] =
-  { 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U };
+static volatile uint8_t s_i2cPacket[APP_I2C_PACKET_SIZE] = { 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U };
 
 void Tone(uint16_t divider, uint16_t delay_ms);
 void App_PlayMelody(uint8_t melody);
@@ -71,7 +70,7 @@ static uint8_t App_UpdateAdcWordForI2c(uint8_t adcChannel, uint8_t packetOffset)
   return ch;
 }
 /*---------------------- Backlight -------------------------*/
-static uint8_t s_backlightLevel = 64U;
+static uint8_t s_backlightLevel = 32U;
 static uint8_t s_backlightApplied = 0U;
 static uint32_t s_backlightOffTick = 0U;
 
@@ -305,7 +304,7 @@ static void App_ProcessAdc(void) {
 
   App_UpdateAdcWordForI2c(ADC_INPUT_CH_X, 2U);
   App_UpdateAdcWordForI2c(ADC_INPUT_CH_Y, 4U);
-  App_UpdateAdcWordForI2c(ADC_INPUT_CH_U, 6U);  // TODO: add
+  App_UpdateAdcWordForI2c(ADC_INPUT_CH_V, 6U);
   if (Inp_AdcisChanged(ADC_INPUT_CH_U) != 0U) {
     App_SetFlagForI2c(APP_I2C_STATUS_USB_MASK, (Inp_AiGet(ADC_INPUT_CH_U) > 1000U));
   }
@@ -323,7 +322,7 @@ void App_Init(void) {
   (void) Inp_AdcEnsureStarted();
   I2cSlave_Init(&hi2c1, App_I2cRequestCallback);
 
-  LCD_SetBacklightTimeout(5000U);
+  LCD_SetBacklightTimeout(55000U);
   Tone(757U, 45U);
   while (Inp_DiGet(0U) != 0U) {
     App_ProcessTone();
@@ -347,7 +346,7 @@ void App_Run(void) {
     }
     App_SetButtonsForI2c(buttons);
     if (buttons != 0U) {
-      LCD_SetBacklightTimeout(15000U);
+      LCD_SetBacklightTimeout(55000U);
     }
     App_ProcessTone();
     App_ProcessAdc();

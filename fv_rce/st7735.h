@@ -16,7 +16,7 @@ extern "C" {
 #define LCD_PIN_CS   5
 #define LCD_PIN_DC   16
 #define LCD_PIN_RST  17
-#define LCD_SPI_CLOCK_HZ 16000000UL
+#define LCD_SPI_CLOCK_HZ 24000000UL
 
 #define LCD_WIDTH   160U
 #define LCD_HEIGHT  80U
@@ -35,6 +35,7 @@ extern "C" {
 
 void LCD_Init(void);
 uint8_t LCD_Process(void);
+void LCD_SetBackgroundColor(uint16_t color);
 void LCD_Clear(uint16_t color);
 void LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
 void LCD_DrawText(uint8_t x, uint8_t y, uint16_t color, const char *text);

@@ -28,7 +28,7 @@ extern gui_scene_t s_sceneMainMenu;
 extern gui_scene_t s_sceneCCentr;
 extern gui_scene_t s_sceneCEdge;
 
-static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK, false);
+static GUIClsComponent s_sceneHomeCls(GUI_COLOR_BLACK);
 static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s_axisCalY);
 static GUIVarComponent s_sceneHomeLSet(5U, 40U, GUI_COLOR_WHITE, &s_lset);
 static GUIVarComponent s_sceneHomeRSet(120U, 40U, GUI_COLOR_WHITE, &s_rset);
@@ -37,7 +37,7 @@ static GUIHotKeyComponent s_sceneHomeHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu)
 static GUIComponent* s_sceneHomeItems[] = { &s_sceneHomeCls, &s_sceneHomeJView, &s_sceneHomeLSet, &s_sceneHomeRSet, &s_sceneHomeBrightness, &s_sceneHomeHotKeyOk };
 gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
-static GUIClsComponent s_sceneMainMenuCls(GUI_COLOR_BLACK, true);
+static GUIClsComponent s_sceneMainMenuCls(GUI_COLOR_BLACK);
 static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_GRAY, "Main menu");
 static GUIBrightnessComponent s_sceneMainMenuBrightness(1U, 118U, 10U);
 static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(5U, 25U, "Cal. center", &s_sceneCCentr);
@@ -46,7 +46,7 @@ static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneH
 static GUIComponent* s_sceneMainMenuItems[] = { &s_sceneMainMenuCls, &s_sceneMainMenuTitle, &s_sceneMainMenuBrightness, &s_sceneMainMenuItemCalCenter, &s_sceneMainMenuItemCalEdge, &s_sceneMainMenuHotKeyBack };
 gui_scene_t s_sceneMainMenu = GUI_SCENE(s_sceneMainMenuItems);
 
-static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK, true);
+static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK);
 static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY);
 static GUIHotKeyComponent s_sceneCCentrHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneMainMenu);
 static GUIHotKeyComponent s_sceneCCentrHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu);
@@ -55,7 +55,7 @@ static GUILabelComponent s_sceneCalibrateOk(120U, 18U, GUI_COLOR_GREEN, "S\nA\nV
 static GUIComponent* s_sceneCCentrItems[] = { &s_sceneCCentrCls, &s_sceneCCentrJView, &s_sceneCCentrHotKeyBack, &s_sceneCCentrHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
 gui_scene_t s_sceneCCentr = GUI_SCENE(s_sceneCCentrItems);
 
-static GUIClsComponent s_sceneCEdgeCls(GUI_COLOR_BLACK, true);
+static GUIClsComponent s_sceneCEdgeCls(GUI_COLOR_BLACK);
 static GUIJViewComponent s_sceneCEdgeJView(GUI_J_VIEW_MODE_CAL_EDGE, &s_axisCalX, &s_axisCalY);
 static GUIHotKeyComponent s_sceneCEdgeHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneMainMenu);
 static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu);
@@ -464,5 +464,6 @@ void loop() {
   if (serial_bg_receive_line(line, sizeof(line))) {
     (void)pen_pc_rx_line(line);
   } 
+  (void)LCD_Process();
   vTaskDelay(1);
 }

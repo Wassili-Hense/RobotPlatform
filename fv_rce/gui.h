@@ -61,7 +61,7 @@ public:
 
 class GUIClsComponent : public GUIComponent {
 public:
-    GUIClsComponent(uint16_t color, bool highlight);
+    GUIClsComponent(uint16_t color);
 
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
@@ -70,12 +70,8 @@ public:
     void Exit(void) override;
 
 private:
-    bool SendBacklightKeepOn(void);
-
     uint16_t m_color;
-    bool m_highlight;
     bool m_pendingClear;
-    uint32_t m_nextKeepAliveMs;
 };
 
 // -----------------------------------------------------------------------------

@@ -19,7 +19,7 @@ enum gui_class_id_t : uint8_t {
 static gui_scene_t* s_guiActiveScene = nullptr;
 static gui_scene_t* s_guiHomeScene = nullptr;
 static uint32_t s_guiLastActivityMs = 0U;
-static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 60000U;
+static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 65000U;
 static bool s_guiIndicatorValue[2] = { false, false };
 static bool s_guiIndicatorPending[2] = { true, true };
 static uint8_t s_guiProgressValue[4] = { 0U, 0U, 0U, 0U };
@@ -35,34 +35,17 @@ static uint8_t s_guiProgressValue[4] = { 0U, 0U, 0U, 0U };
 // Section: GUIClsComponent
 // -----------------------------------------------------------------------------
 
-namespace {
-static constexpr uint32_t GUI_CLS_KEEPALIVE_PERIOD_MS = 10000U;
-static constexpr uint16_t GUI_CLS_KEEPALIVE_TIMEOUT_MS = 15000U;
-}
-
 uint8_t GUIClsComponent::GetClassId(void) const {
   return (uint8_t)GUI_CLASS_CLS;
 }
 
-GUIClsComponent::GUIClsComponent(uint16_t color, bool highlight)
+GUIClsComponent::GUIClsComponent(uint16_t color)
   : m_color(color),
-    m_highlight(highlight),
-    m_pendingClear(false),
-    m_nextKeepAliveMs(0U) {
-}
-
-bool GUIClsComponent::SendBacklightKeepOn(void) {
-  if (!m_highlight) return false;
-  const uint32_t now = millis();
-  if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
-  rio_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
-  m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
-  return true;
+    m_pendingClear(false){
 }
 
 void GUIClsComponent::Enter(void) {
   m_pendingClear = true;
-  m_nextKeepAliveMs = millis();
 }
 
 void GUIClsComponent::Process(void) {
@@ -74,7 +57,7 @@ bool GUIClsComponent::Send(void) {
     m_pendingClear = false;
     return true;
   }
-  return SendBacklightKeepOn();
+  return false;
 }
 
 void GUIClsComponent::Exit(void) {
@@ -933,12 +916,9 @@ void GUIServiceActiveScene(void) {
       s_guiIndicatorPending[i] = false;
     }
   }
-  const uint32_t now = millis();
   for (uint8_t i = 0U; i < 4U; ++i) {
     (void)LCD_DrawProgressBar(i, s_guiProgressValue[i]);
   }
-
-  while (LCD_Process()) {}
 }
 
 void GUISetIndicator(uint8_t index, bool state) {

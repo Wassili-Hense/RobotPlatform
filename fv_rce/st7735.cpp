@@ -16,12 +16,12 @@
 #define ST7735_Y_OFFSET 24U
 #define ST7735_DMA_ROWS 8U
 #define ST7735_DMA_PIXELS (LCD_WIDTH * ST7735_DMA_ROWS)
+#define ST7735_DIRTY_CLEAN 0xFFU
 #define ProgressBar_PB_LEN   64U
 #define ProgressBar_PB_TH     3U
 
 typedef enum { FLUSH_IDLE = 0, FLUSH_CASET_CMD, FLUSH_CASET_DATA, FLUSH_RASET_CMD, FLUSH_RASET_DATA, FLUSH_RAMWR_CMD, FLUSH_PIXELS } ST7735_FlushStep;
 typedef struct { uint8_t x0; uint8_t y0; } ProgressBar_Spec;
-typedef struct { uint8_t valid; uint8_t x0; uint8_t y0; uint8_t x1; uint8_t y1; } ST7735_DirtyRect;
 typedef struct { uint8_t active; uint8_t x; uint8_t y; uint8_t w; uint8_t h; uint8_t nextY; ST7735_FlushStep step; } ST7735_FlushState;
 
 static spi_device_handle_t s_lcd = NULL;
@@ -30,8 +30,10 @@ static volatile uint8_t s_spiBusy = 0U;
 static uint8_t s_txSmall[4];
 static uint8_t *s_dmaBuf = NULL;
 static uint16_t s_framebuffer[LCD_WIDTH * LCD_HEIGHT];
-static ST7735_DirtyRect s_dirty;
+static uint8_t s_dirtyX0[LCD_HEIGHT];
+static uint8_t s_dirtyX1[LCD_HEIGHT];
 static ST7735_FlushState s_flush;
+static uint16_t s_bgColor = LCD_BLACK;
 static uint8_t s_progressBarPrev[4] = {0U, 0U, 0U, 0U};
 
 static const ProgressBar_Spec s_progressBars[4] = {
@@ -58,24 +60,19 @@ static void ST7735_PreTransfer(spi_transaction_t *t) { digitalWrite(LCD_PIN_DC, 
 static uint16_t ST7735_Idx(uint8_t x, uint8_t y) { return (uint16_t)y * LCD_WIDTH + x; }
 static uint16_t ST7735_Swap565(uint16_t c) { return (uint16_t)((c << 8) | (c >> 8)); }
 static const uint8_t *ST7735_GetMarkerGlyph(uint8_t idx) { return (idx >= ST7735_MARKER_COUNT) ? NULL : s_markers[idx]; }
-static void ST7735_DirtyClear(void) { memset(&s_dirty, 0, sizeof(s_dirty)); }
+static void ST7735_DirtyClear(void) { memset(s_dirtyX0, ST7735_DIRTY_CLEAN, sizeof(s_dirtyX0)); memset(s_dirtyX1, 0, sizeof(s_dirtyX1)); }
+static uint8_t ST7735_DirtyRow(uint8_t y) { return s_dirtyX0[y] != ST7735_DIRTY_CLEAN; }
 static void ST7735_DirtyAdd(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
   if ((w == 0U) || (h == 0U) || (x >= LCD_WIDTH) || (y >= LCD_HEIGHT)) return;
   uint8_t x1 = (uint8_t)(x + w - 1U);
-  if(x1 > LCD_WIDTH - 1){
-    x1 = LCD_WIDTH - 1;
-  }
+  if ((uint16_t)x + w > LCD_WIDTH) x1 = LCD_WIDTH - 1U;
   uint8_t y1 = (uint8_t)(y + h - 1U);
-  if(y1 > LCD_HEIGHT - 1){
-    y1 = LCD_HEIGHT - 1;
+  if ((uint16_t)y + h > LCD_HEIGHT) y1 = LCD_HEIGHT - 1U;
+  for (uint8_t yy = y; yy <= y1; yy++) {
+    if (s_dirtyX0[yy] == ST7735_DIRTY_CLEAN) { s_dirtyX0[yy] = x; s_dirtyX1[yy] = x1; }
+    else { if (x < s_dirtyX0[yy]) s_dirtyX0[yy] = x; if (x1 > s_dirtyX1[yy]) s_dirtyX1[yy] = x1; }
   }
-  if (s_dirty.valid == 0U) { s_dirty.valid = 1U; s_dirty.x0 = x; s_dirty.y0 = y; s_dirty.x1 = x1; s_dirty.y1 = y1; return; }
-  if (x < s_dirty.x0) s_dirty.x0 = x;
-  if (y < s_dirty.y0) s_dirty.y0 = y;
-  if (x1 > s_dirty.x1) s_dirty.x1 = x1;
-  if (y1 > s_dirty.y1) s_dirty.y1 = y1;
 }
-
 static uint8_t ST7735_WaitSpiDone(uint8_t block) {
   if (s_spiBusy == 0U) return 1U;
   spi_transaction_t *ret = NULL;
@@ -108,20 +105,21 @@ static void ST7735_FbFillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16
   }
 }
 
-static uint8_t ST7735_FbDrawChar(uint8_t x, uint8_t y, char ch, uint16_t color) {
-  uint8_t any = 0U;
-  if (((uint8_t)ch < FONT_FIRST_CHAR) || ((uint8_t)ch > FONT_LAST_CHAR)) ch = '?';
-  const uint8_t *glyph = &Font7x10[ST7735_FONT_GLYPH_INDEX(ch)];
-  uint16_t c = ST7735_Swap565(color);
-  for (uint8_t row = 0U; row < FONT_7X10_HEIGHT; row++) {
-    if ((uint16_t)y + row >= LCD_HEIGHT) break;
-    uint8_t rowBits = glyph[row];
-    for (uint8_t col = 0U; col < FONT_7X10_WIDTH; col++) {
-      if ((uint16_t)x + col >= LCD_WIDTH) break;
-      if (rowBits & (uint8_t)(0x80U >> col)) { s_framebuffer[ST7735_Idx((uint8_t)(x + col), (uint8_t)(y + row))] = c; any = 1U; }
+static void ST7735_FbDrawChar(uint8_t x, uint8_t y, char ch, uint16_t color) {
+    if (((uint8_t)ch < FONT_FIRST_CHAR) || ((uint8_t)ch > FONT_LAST_CHAR)) {
+        ch = '?';
     }
-  }
-  return any;
+    const uint8_t *glyph = &Font7x10[ST7735_FONT_GLYPH_INDEX(ch)];
+    uint16_t fg = ST7735_Swap565(color);
+    uint16_t bg = ST7735_Swap565(s_bgColor);
+    for (uint8_t row = 0; row < FONT_7X10_HEIGHT; row++) {
+        if ((uint16_t)y + row >= LCD_HEIGHT) break;
+        uint8_t rowBits = glyph[row];
+        for (uint8_t col = 0; col < FONT_7X10_WIDTH; col++) {
+            if ((uint16_t)x + col >= LCD_WIDTH) break;
+            s_framebuffer[ST7735_Idx(x + col, y + row)] = (rowBits & (0x80U >> col)) ? fg : bg;
+        }
+    }
 }
 
 static void ST7735_FbDrawMarker(uint8_t x, uint8_t y, const uint8_t *glyph, uint16_t color) {
@@ -136,18 +134,25 @@ static void ST7735_FbDrawMarker(uint8_t x, uint8_t y, const uint8_t *glyph, uint
 }
 
 static uint8_t ST7735_FlushStartFromDirty(void) {
-  if ((s_flush.active != 0U) || (s_dirty.valid == 0U)) return 0U;
-  s_flush.x = s_dirty.x0;
-  s_flush.y = s_dirty.y0;
-  s_flush.w = (uint8_t)(s_dirty.x1 - s_dirty.x0 + 1U);
-  s_flush.h = (uint8_t)(s_dirty.y1 - s_dirty.y0 + 1U);
-  s_flush.nextY = s_flush.y;
+  if (s_flush.active != 0U) return 0U;
+  uint8_t y = 0U;
+  while ((y < LCD_HEIGHT) && (ST7735_DirtyRow(y) == 0U)) y++;
+  if (y >= LCD_HEIGHT) return 0U;
+  uint8_t x0 = s_dirtyX0[y];
+  uint8_t x1 = s_dirtyX1[y];
+  uint8_t h = 1U;
+  uint8_t yy = (uint8_t)(y + 1U);
+  while ((yy < LCD_HEIGHT) && ST7735_DirtyRow(yy) && (s_dirtyX0[yy] == x0) && (s_dirtyX1[yy] == x1)) { h++; yy++; }
+  for (uint8_t r = y; r < (uint8_t)(y + h); r++) { s_dirtyX0[r] = ST7735_DIRTY_CLEAN; s_dirtyX1[r] = 0U; }
+  s_flush.x = x0;
+  s_flush.y = y;
+  s_flush.w = (uint8_t)(x1 - x0 + 1U);
+  s_flush.h = h;
+  s_flush.nextY = y;
   s_flush.step = FLUSH_CASET_CMD;
   s_flush.active = 1U;
-  ST7735_DirtyClear();
   return 1U;
 }
-
 static uint8_t ST7735_FlushProcess(void) {
   if (s_flush.active == 0U) return 1U;
   if (s_dmaBuf == NULL) return 0U;
@@ -228,6 +233,7 @@ void LCD_Init(void) {
   { const uint8_t d[] = {0x0E,0x0E,0x03,0x00,0x06,0x00,0x00,0x00,0x00,0x06,0x12,0x37,0x10,0x10,0x06,0x3F}; ST7735_WriteCommandWithDataBlocking(0xE1,d,sizeof(d)); }
   { const uint8_t d[] = {0x05}; ST7735_WriteCommandWithDataBlocking(0x3A,d,sizeof(d)); }
   ST7735_WriteCommandBlocking(0x29); delay(20);
+  s_bgColor = LCD_BLACK;
   memset(s_framebuffer, 0, sizeof(s_framebuffer)); memset(&s_flush, 0, sizeof(s_flush)); ST7735_DirtyClear();
   s_spiBusy = 0U;
   memset(s_progressBarPrev, 0, sizeof(s_progressBarPrev));
@@ -240,8 +246,10 @@ uint8_t LCD_Process(void) {
   return ST7735_FlushProcess() ? 1U : 0U;
 }
 
+void LCD_SetBackgroundColor(uint16_t color) { s_bgColor = color; }
 void LCD_Clear(uint16_t color) {
-  ST7735_FbFillRect(0U, 8U, LCD_WIDTH, (uint8_t)(LCD_HEIGHT - 8U), color);
+  LCD_SetBackgroundColor(color);
+  ST7735_FbFillRect(0U, 8U, LCD_WIDTH, (uint8_t)(LCD_HEIGHT - 8U), s_bgColor);
   ST7735_DirtyAdd(0U, 8U, LCD_WIDTH, (uint8_t)(LCD_HEIGHT - 8U));
 }
 void LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
@@ -259,12 +267,13 @@ void LCD_DrawText(uint8_t x, uint8_t y, uint16_t color, const char *text) {
     if (ch == '\n') { cx = x; cy = (uint8_t)(cy + FONT_7X10_HEIGHT + FONT_7X10_HEIGHT / 2); continue; }
     if ((uint16_t)cx + ST7735_TEXT_CELL_WIDTH > LCD_WIDTH) { cx = x; cy = (uint8_t)(cy + FONT_7X10_HEIGHT); }
     if ((uint16_t)cy + FONT_7X10_HEIGHT > LCD_HEIGHT) break;
-    if (ST7735_FbDrawChar(cx, cy, ch, color) != 0U) {
-      if (cx < minX) minX = cx; if (cy < minY) minY = cy;
-      if ((uint8_t)(cx + FONT_7X10_WIDTH - 1U) > maxX) maxX = (uint8_t)(cx + FONT_7X10_WIDTH - 1U);
-      if ((uint8_t)(cy + FONT_7X10_HEIGHT - 1U) > maxY) maxY = (uint8_t)(cy + FONT_7X10_HEIGHT - 1U);
-      any = 1U;
-    }
+    uint8_t cellW = ST7735_TEXT_CELL_WIDTH;
+    if ((uint16_t)cx + cellW > LCD_WIDTH) cellW = (uint8_t)(LCD_WIDTH - cx);
+    ST7735_FbDrawChar(cx, cy, ch, color);
+    if (cx < minX) minX = cx; if (cy < minY) minY = cy;
+    if ((uint8_t)(cx + cellW - 1U) > maxX) maxX = (uint8_t)(cx + cellW - 1U);
+    if ((uint8_t)(cy + FONT_7X10_HEIGHT - 1U) > maxY) maxY = (uint8_t)(cy + FONT_7X10_HEIGHT - 1U);
+    any = 1U;
     cx = (uint8_t)(cx + ST7735_TEXT_CELL_WIDTH);
   }
   if (any != 0U) ST7735_DirtyAdd(minX, minY, (uint8_t)(maxX - minX + 1U), (uint8_t)(maxY - minY + 1U));
