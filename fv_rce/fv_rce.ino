@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "hmi.h"
+#include "rio.h"
 #include "gui.h"
 #include "st7735.h"
 #include "serial_bg.h"
@@ -33,7 +33,7 @@ static GUIJViewComponent s_sceneHomeJView(GUI_J_VIEW_MODE_TRACK, &s_axisCalX, &s
 static GUIVarComponent s_sceneHomeLSet(5U, 40U, GUI_COLOR_WHITE, &s_lset);
 static GUIVarComponent s_sceneHomeRSet(120U, 40U, GUI_COLOR_WHITE, &s_rset);
 static GUIBrightnessComponent s_sceneHomeBrightness(0U, 0U, 0U);
-static GUIHotKeyComponent s_sceneHomeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneHomeHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu);
 static GUIComponent* s_sceneHomeItems[] = { &s_sceneHomeCls, &s_sceneHomeJView, &s_sceneHomeLSet, &s_sceneHomeRSet, &s_sceneHomeBrightness, &s_sceneHomeHotKeyOk };
 gui_scene_t s_sceneHome = GUI_SCENE(s_sceneHomeItems);
 
@@ -42,14 +42,14 @@ static GUILabelComponent s_sceneMainMenuTitle(30U, 10U, GUI_COLOR_GRAY, "Main me
 static GUIBrightnessComponent s_sceneMainMenuBrightness(1U, 118U, 10U);
 static GUIMenuItemComponent s_sceneMainMenuItemCalCenter(5U, 25U, "Cal. center", &s_sceneCCentr);
 static GUIMenuItemComponent s_sceneMainMenuItemCalEdge(5U, 40U, "Cal. edge", &s_sceneCEdge);
-static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneHome);
+static GUIHotKeyComponent s_sceneMainMenuHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneHome);
 static GUIComponent* s_sceneMainMenuItems[] = { &s_sceneMainMenuCls, &s_sceneMainMenuTitle, &s_sceneMainMenuBrightness, &s_sceneMainMenuItemCalCenter, &s_sceneMainMenuItemCalEdge, &s_sceneMainMenuHotKeyBack };
 gui_scene_t s_sceneMainMenu = GUI_SCENE(s_sceneMainMenuItems);
 
 static GUIClsComponent s_sceneCCentrCls(GUI_COLOR_BLACK, true);
 static GUIJViewComponent s_sceneCCentrJView(GUI_J_VIEW_MODE_CAL_CENTER, &s_axisCalX, &s_axisCalY);
-static GUIHotKeyComponent s_sceneCCentrHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
-static GUIHotKeyComponent s_sceneCCentrHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCCentrHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCCentrHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu);
 static GUILabelComponent s_sceneCalibrateBack(30U, 18U, GUI_COLOR_ORANGE, "D\nR\nO\nP");
 static GUILabelComponent s_sceneCalibrateOk(120U, 18U, GUI_COLOR_GREEN, "S\nA\nV\nE");
 static GUIComponent* s_sceneCCentrItems[] = { &s_sceneCCentrCls, &s_sceneCCentrJView, &s_sceneCCentrHotKeyBack, &s_sceneCCentrHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
@@ -57,8 +57,8 @@ gui_scene_t s_sceneCCentr = GUI_SCENE(s_sceneCCentrItems);
 
 static GUIClsComponent s_sceneCEdgeCls(GUI_COLOR_BLACK, true);
 static GUIJViewComponent s_sceneCEdgeJView(GUI_J_VIEW_MODE_CAL_EDGE, &s_axisCalX, &s_axisCalY);
-static GUIHotKeyComponent s_sceneCEdgeHotKeyBack(HMI_DATA_BTN_BACK, &s_sceneMainMenu);
-static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(HMI_DATA_BTN_OK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCEdgeHotKeyBack(RIO_DATA_BTN_BACK, &s_sceneMainMenu);
+static GUIHotKeyComponent s_sceneCEdgeHotKeyOk(RIO_DATA_BTN_OK, &s_sceneMainMenu);
 static GUIComponent* s_sceneCEdgeItems[] = { &s_sceneCEdgeCls, &s_sceneCEdgeJView, &s_sceneCEdgeHotKeyBack, &s_sceneCEdgeHotKeyOk, &s_sceneCalibrateBack, &s_sceneCalibrateOk };
 gui_scene_t s_sceneCEdge = GUI_SCENE(s_sceneCEdgeItems);
 
@@ -75,7 +75,7 @@ static TaskHandle_t s_rxTaskHandle = nullptr;
 static int32_t s_usbConnPen;
 
 // [Log]
-static void HmiLogToSerial(const char* text, bool emergency) {
+static void RioLogToSerial(const char* text, bool emergency) {
   if (text == nullptr) return;
   if (emergency && !serial_bg_is_connected()) {
     serial_bg_set_connected(true);
@@ -164,6 +164,54 @@ static float AppNormalizeAxis(uint16_t raw, const gui_axis_cal_t& cal) {
   return value;
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Progress bar / battery SOC                                                 */
+/* -------------------------------------------------------------------------- */
+/* Ubat = ADC_V * 0.00399446 - 0.19284 */
+/* Full battery: 4.10 V -> ADC = 1075 */
+static const uint16_t ocv_adc[] =
+  { 895, 919, 964, 985, 1010, 1020, 1027, 1035, 1047, 1055, 1060, 1067, 1075 };
+
+/* Progress bar range: 0..64 */
+static const uint8_t ocv_soc[] =
+  { 0, 4, 13, 19, 29, 32, 36, 39, 45, 49, 52, 58, 64 };
+
+#define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
+
+static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2) {
+  uint16_t dx = (uint16_t)(x2 - x1);
+  uint16_t num = (uint16_t)(x - x1);
+  uint16_t t = (uint16_t)((num << 8) / dx);
+  return (uint8_t)(y1 + ((((uint16_t)(y2 - y1)) * t) >> 8));
+}
+
+static uint8_t adc_to_soc(uint16_t adc) {
+  int low;
+  int high;
+
+  if (adc <= ocv_adc[0]) return ocv_soc[0];
+  if (adc >= ocv_adc[OCV_POINTS - 1U]) return ocv_soc[OCV_POINTS - 1U];
+
+  low = 0;
+  high = (int)OCV_POINTS - 1;
+  while ((high - low) > 1) {
+    int mid = (low + high) >> 1;
+    if (adc < ocv_adc[mid]) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+  return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
+}
+
+static void AppProcessRioBattery(void) {
+  if (rio_changed(RIO_DATA_ADC_V)) {
+    GUISetProgress(3U, adc_to_soc(rio_get(RIO_DATA_ADC_V)));
+  }
+}
+
 static void AppEmitVarI(uint32_t varId, int32_t value) {
   char name[5];
   char line[32];
@@ -243,7 +291,7 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
       break;
     case PEN_LINK_SECURE:
 #ifdef MELODY 
-      hmi_cmd_play_melody(HMI_MELODY_CONNECTED);
+      rio_cmd_play_melody(RIO_MELODY_CONNECTED);
 #endif
       GUISetIndicator(0U, true);
       (void)AppPcTxLine("@LINK SECURE");
@@ -251,7 +299,7 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
       break;
     case PEN_LINK_LOST:
 #ifdef MELODY
-      hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+      rio_cmd_play_melody(RIO_MELODY_DISCONNECTED);
 #endif
       GUISetIndicator(0U, false);
       GUISetProgress(0U, 0U);
@@ -306,29 +354,29 @@ static bool AppPenRxEvent(const pen_rx_event_t* ev) {
 static void AppProcessPenTx(void) {
   if (!pen_is_connected()) return;
 
-  if (hmi_changed(HMI_DATA_JOY_X)) {
-    const float joyX = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_X), s_axisCalX);
+  if (rio_changed(RIO_DATA_JOY_X)) {
+    const float joyX = AppNormalizeAxis(rio_get(RIO_DATA_JOY_X), s_axisCalX);
     (void)pen_send_stream(PEN_VAR_JX_APP, joyX, 500U);
   }
-  if (hmi_changed(HMI_DATA_JOY_Y)) {
-    const float joyY = AppNormalizeAxis(hmi_get(HMI_DATA_JOY_Y), s_axisCalY);
+  if (rio_changed(RIO_DATA_JOY_Y)) {
+    const float joyY = AppNormalizeAxis(rio_get(RIO_DATA_JOY_Y), s_axisCalY);
     (void)pen_send_stream(PEN_VAR_JY_APP, joyY, 500U);
   }
 
   if (GUIGetActiveScene() == &s_sceneHome) {
-    if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U)) {
+    if (rio_changed(RIO_DATA_BTN_LUP) && (rio_get(RIO_DATA_BTN_LUP) != 0U)) {
       ++s_lset;
       (void)pen_send_state(PEN_VAR_LSET_APP, s_lset);
     }
-    if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U)) {
+    if (rio_changed(RIO_DATA_BTN_LDN) && (rio_get(RIO_DATA_BTN_LDN) != 0U)) {
       --s_lset;
       (void)pen_send_state(PEN_VAR_LSET_APP, s_lset);
     }
-    if (hmi_changed(HMI_DATA_BTN_RUP) && (hmi_get(HMI_DATA_BTN_RUP) != 0U)) {
+    if (rio_changed(RIO_DATA_BTN_RUP) && (rio_get(RIO_DATA_BTN_RUP) != 0U)) {
       ++s_rset;
       (void)pen_send_state(PEN_VAR_RSET_APP, s_rset);
     }
-    if (hmi_changed(HMI_DATA_BTN_RDN) && (hmi_get(HMI_DATA_BTN_RDN) != 0U)) {
+    if (rio_changed(RIO_DATA_BTN_RDN) && (rio_get(RIO_DATA_BTN_RDN) != 0U)) {
       --s_rset;
       (void)pen_send_state(PEN_VAR_RSET_APP, s_rset);
     }
@@ -347,7 +395,7 @@ static void AppProcessHomePowerOff(void) {
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 301;
 
-  if (GUIGetActiveScene() != &s_sceneHome || hmi_get(HMI_DATA_BTN_ANYKEY) || pen_is_connected() || serial_bg_is_connected()) {
+  if (GUIGetActiveScene() != &s_sceneHome || rio_get(RIO_DATA_BTN_ANYKEY) || pen_is_connected() || serial_bg_is_connected()) {
     lastActivityMs = now;
     prevRemSec = 301;
     return;
@@ -356,11 +404,11 @@ static void AppProcessHomePowerOff(void) {
   const int32_t remainingS = 300L - (int32_t)idleS;
   if(prevRemSec != remainingS){
     if (remainingS==6 || remainingS==4 || remainingS==2) {
-      hmi_cmd_play_tone(500U, 50U);
+      rio_cmd_play_tone(500U, 50U);
     } else if (remainingS == 1) {
-      hmi_cmd_play_melody(HMI_MELODY_DISCONNECTED);
+      rio_cmd_play_melody(RIO_MELODY_DISCONNECTED);
     } else if (remainingS <= 0) {
-      hmi_cmd_power_off();
+      rio_cmd_power_off();
     }
     prevRemSec = remainingS;
   }
@@ -368,13 +416,19 @@ static void AppProcessHomePowerOff(void) {
 
 void setup() {
   (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
-  hmi_init(HmiLogToSerial);
+  rio_init(RioLogToSerial);
+
   LCD_Init();
+  LCD_FillRect(0U, 0U, LCD_WIDTH, 8U, LCD_BLACK);
+  LCD_DrawMarker(LCD_WIDTH / 2U, 4, 9, LCD_WHITE);  // battery
+  GUISetIndicator(0U, 0U);
+  GUISetIndicator(1U, 0U);
+
   (void)pen_begin();
 #ifdef MELODY
-  hmi_cmd_play_melody(HMI_MELODY_POWER_ON);
+  rio_cmd_play_melody(RIO_MELODY_POWER_ON);
 #else
-  hmi_cmd_play_tone(200, 50);
+  rio_cmd_play_tone(200, 50);
 #endif
   GUISetHomeScene(&s_sceneHome);
   GUISwitchScene(&s_sceneHome);
@@ -390,17 +444,18 @@ void loop() {
 
   if(now - lastHmiTick >= pdMS_TO_TICKS(5)){
     lastHmiTick = now;
-    if (hmi_tick() == HMI_TICK_OK) {
-      if (hmi_changed(HMI_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
-        const bool connected = (hmi_get(HMI_DATA_STAT_USB_CONN) != 0U);
+    if (rio_tick() == RIO_TICK_OK) {
+      if (rio_changed(RIO_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
+        const bool connected = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U);
         serial_bg_set_connected(connected);
         GUISetIndicator(1U, connected);
       }
+      AppProcessRioBattery();
       AppProcessHomePowerOff();
       AppProcessPenTx();
       //GUI
       (void)GUIServiceActiveScene();
-      hmi_sysSend();
+      rio_sysSend();
     }
   } 
   if(pen_receive(&ev)) {

@@ -55,7 +55,7 @@ bool GUIClsComponent::SendBacklightKeepOn(void) {
   if (!m_highlight) return false;
   const uint32_t now = millis();
   if ((int32_t)(now - m_nextKeepAliveMs) < 0) return false;
-  hmi_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
+  rio_cmd_set_backlight_timeout(GUI_CLS_KEEPALIVE_TIMEOUT_MS);
   m_nextKeepAliveMs = now + GUI_CLS_KEEPALIVE_PERIOD_MS;
   return true;
 }
@@ -241,14 +241,14 @@ bool GUIJViewComponent::SaveCalibration(void) {
 }
 
 bool GUIJViewComponent::HandleButtons(void) {
-  if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !hmi_changed(HMI_DATA_BTN_OK) || (hmi_get(HMI_DATA_BTN_OK) == 0U)) {
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !rio_changed(RIO_DATA_BTN_OK) || (rio_get(RIO_DATA_BTN_OK) == 0U)) {
     return false;
   }
   return SaveCalibration();
 }
 
 bool GUIJViewComponent::Update(void) {
-  const bool backlightOn = (hmi_get(HMI_DATA_STAT_BL_ON) != 0U);
+  const bool backlightOn = (rio_get(RIO_DATA_STAT_BL_ON) != 0U);
   if (!backlightOn) {
     if ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible) {
       m_phase = GUI_J_VIEW_PHASE_ERASE;
@@ -261,8 +261,8 @@ bool GUIJViewComponent::Update(void) {
   }
 
   UpdateWindow();
-  m_rawX = hmi_get(HMI_DATA_JOY_X);
-  m_rawY = hmi_get(HMI_DATA_JOY_Y);
+  m_rawX = rio_get(RIO_DATA_JOY_X);
+  m_rawY = rio_get(RIO_DATA_JOY_Y);
 
   if (!m_hasSample) {
     m_hasSample = true;
@@ -339,7 +339,7 @@ bool GUIJViewComponent::Send(void) {
     LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
     {
       m_visible = false;
-      if ((hmi_get(HMI_DATA_STAT_BL_ON) != 0U) && ((m_currentX != m_nextX) || (m_currentY != m_nextY))) {
+      if ((rio_get(RIO_DATA_STAT_BL_ON) != 0U) && ((m_currentX != m_nextX) || (m_currentY != m_nextY))) {
         m_phase = GUI_J_VIEW_PHASE_DRAW;
       } else {
         m_phase = GUI_J_VIEW_PHASE_IDLE;
@@ -349,7 +349,7 @@ bool GUIJViewComponent::Send(void) {
     return true;
   }
 
-  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (hmi_get(HMI_DATA_STAT_BL_ON) == 0U)) {
+  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (rio_get(RIO_DATA_STAT_BL_ON) == 0U)) {
     m_phase = GUI_J_VIEW_PHASE_IDLE;
     m_pending = false;
     return false;
@@ -388,7 +388,7 @@ uint8_t GUIHotKeyComponent::GetClassId(void) const {
   return (uint8_t)GUI_CLASS_HOT_KEY;
 }
 
-GUIHotKeyComponent::GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene)
+GUIHotKeyComponent::GUIHotKeyComponent(rio_data_idx_t idx, gui_scene_t* targetScene)
   : m_idx(idx),
     m_targetScene(targetScene) {
 }
@@ -397,7 +397,7 @@ void GUIHotKeyComponent::Enter(void) {
 }
 
 void GUIHotKeyComponent::Process(void) {
-  if (hmi_changed(m_idx) && (hmi_get(m_idx) != 0U) && (m_targetScene != nullptr)) {
+  if (rio_changed(m_idx) && (rio_get(m_idx) != 0U) && (m_targetScene != nullptr)) {
     GUISwitchScene(m_targetScene);
   }
 }
@@ -674,7 +674,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
   gui_scene_t* const scene = GUIGetActiveScene();
   if (scene == nullptr) return false;
 
-  if (hmi_changed(HMI_DATA_BTN_UP) && (hmi_get(HMI_DATA_BTN_UP) != 0U)) {
+  if (rio_changed(RIO_DATA_BTN_UP) && (rio_get(RIO_DATA_BTN_UP) != 0U)) {
     GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
     if ((next != nullptr) && (next != this)) {
       SetActive(false);
@@ -683,7 +683,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
     return false;
   }
 
-  if (hmi_changed(HMI_DATA_BTN_DOWN) && (hmi_get(HMI_DATA_BTN_DOWN) != 0U)) {
+  if (rio_changed(RIO_DATA_BTN_DOWN) && (rio_get(RIO_DATA_BTN_DOWN) != 0U)) {
     GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, 1);
     if ((next != nullptr) && (next != this)) {
       SetActive(false);
@@ -692,7 +692,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
     return false;
   }
 
-  if (hmi_changed(HMI_DATA_BTN_OK) && (hmi_get(HMI_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
+  if (rio_changed(RIO_DATA_BTN_OK) && (rio_get(RIO_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
     GUISwitchScene(m_targetScene);
     return (GUIGetActiveScene() != scene);
   }
@@ -762,7 +762,7 @@ static void GUIBrightnessApply(uint8_t mode, uint8_t index) {
   if (mode == 0U) {
     step = (uint8_t)((step + 1U) / 2U);
   }
-  hmi_cmd_set_brightness(step);
+  rio_cmd_set_brightness(step);
 }
 }
 
@@ -823,11 +823,11 @@ bool GUIBrightnessComponent::ProcessInput(void) {
   if (m_mode != 1U) return false;
 
   bool changed = false;
-  if (hmi_changed(HMI_DATA_BTN_LUP) && (hmi_get(HMI_DATA_BTN_LUP) != 0U) && (m_actualIndex < 9U)) {
+  if (rio_changed(RIO_DATA_BTN_LUP) && (rio_get(RIO_DATA_BTN_LUP) != 0U) && (m_actualIndex < 9U)) {
     ++m_actualIndex;
     changed = true;
   }
-  if (hmi_changed(HMI_DATA_BTN_LDN) && (hmi_get(HMI_DATA_BTN_LDN) != 0U) && (m_actualIndex > 0U)) {
+  if (rio_changed(RIO_DATA_BTN_LDN) && (rio_get(RIO_DATA_BTN_LDN) != 0U) && (m_actualIndex > 0U)) {
     --m_actualIndex;
     changed = true;
   }
@@ -867,7 +867,7 @@ void GUIBrightnessComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 static bool GUIHandleIdleHomeTimeout(void) {
-  if (hmi_get(HMI_DATA_BTN_ANYKEY) != 0U) {
+  if (rio_get(RIO_DATA_BTN_ANYKEY) != 0U) {
     s_guiLastActivityMs = millis();
     return false;
   }

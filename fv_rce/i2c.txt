@@ -3,10 +3,12 @@ Slave address: 0x14
 
 ### Read from slave (fixed packet)
 
-Slave returns one fixed-size packet of 6 bytes on every read transaction.
+Slave returns one fixed-size packet of 8 bytes on every read transaction.
+Multibyte values are little-endian.
 
 Packet bytes:
-- Byte0 = word0[7:0]
+
+- Byte0 = buttons[7:0]
   - bit0 - Button ON
   - bit1 - Button Fire
   - bit2 - Button UP
@@ -15,31 +17,39 @@ Packet bytes:
   - bit5 - Button OK
   - bit6 - Button LUP
   - bit7 - Button LDN
-- Byte1 = word0[15:8]
+- Byte1 = status/buttons[15:8]
   - bit0 - Button RUP
   - bit1 - Button RDN
   - bit2..3 - reserved, 0
   - bit4 - USB connected (1 -> connected, 0 -> not connected)
   - bit5 - reserved, 0
-  - bit6 - LCD backlight state (1 = on, 0 = off)
-  - bit7 - LCD busy / flow control (1 = master must stop sending LCD commands, 0 = master may send LCD commands)
+  - bit6 - LCD backlight state (1 -> on, 0 -> off)
+  - bit7 - reserved, 0
 - Byte2 = ADC X low byte
-- Byte3:
-  - bits[3:0]  = ADC X bits[11:8]
-  - bits[6:4]  = reserved, 0
-  - bit7       = ADC X changed flag
-  - master reconstructs ADC X as: ((Byte3 & 0x0F) << 8) | Byte2
-
+- Byte3 = ADC X high/status byte
+  - bits[3:0] = ADC X bits[11:8]
+  - bits[6:4] = reserved, 0
+  - bit7 = ADC X changed flag
+  - master reconstructs ADC X as: `((Byte3 & 0x0F) << 8) | Byte2`
+  - changed flag: `(Byte3 & 0x80) != 0`
 - Byte4 = ADC Y low byte
-- Byte5:
-  - bits[3:0]  = ADC Y bits[11:8]
-  - bits[6:4]  = reserved, 0
-  - bit7       = ADC Y changed flag
-  - master reconstructs ADC Y as: ((Byte5 & 0x0F) << 8) | Byte4
+- Byte5 = ADC Y high/status byte
+  - bits[3:0] = ADC Y bits[11:8]
+  - bits[6:4] = reserved, 0
+  - bit7 = ADC Y changed flag
+  - master reconstructs ADC Y as: `((Byte5 & 0x0F) << 8) | Byte4`
+  - changed flag: `(Byte5 & 0x80) != 0`
+- Byte6 = ADC U low byte
+- Byte7 = ADC U high/status byte
+  - bits[3:0] = ADC U bits[11:8]
+  - bits[6:4] = reserved, 0
+  - bit7 = ADC U changed flag
+  - master reconstructs ADC U as: `((Byte7 & 0x0F) << 8) | Byte6`
+  - changed flag: `(Byte7 & 0x80) != 0`
 
-Buttons bit = 1 means button pressed
+Buttons bit = 1 means button pressed.
 
-### Write to slave
+#### Write to slave
 
 One command per I2C write transaction.
 Maximum write length: 32 bytes.
@@ -55,6 +65,7 @@ Multibyte parameters are little-endian.
 - Tone(divider, delay_ms)
   - divider = 1000000 / Hz
   - format: [0x07][divider_lo][divider_hi][delay_lo][delay_hi]
+
 - Melody(melody)
   - melody: 1 - POWER_ON, 2 - CONNECTED, 3 - DISCONNECTED
   - format: [0x08][melody]
@@ -63,45 +74,3 @@ Multibyte parameters are little-endian.
   - immediately disables PA11 (power latch)
   - format: [0x0F][0xAA]
 
-- LCD_Clear(color)
-  - color: RGB565
-  - format: [0x10][color_lo][color_hi]
-  - LCD service time in slave: about 48.818 ms
-
-- LCD_FillRect(x, y, w, h, color)
-  - format: [0x11][x][y][w][h][color_lo][color_hi]
-  - LCD service time in slave: about 22 us * h + 4 us * w * h
-
-- LCD_DrawMarker(x, y, idx, color)
-  - x, y - marker center
-  - idx  - marker index (size is taken from internal table)
-  - format: [0x12][x][y][idx][color_lo][color_hi]
-  - LCD service time in slave: about 0.278 ms
-
-- LCD_DrawText(x, y, color, text)
-  - color: RGB565
-  - text must be zero-terminated
-  - text max length is limited by the LCD driver queue item storage
-  - background color is global (see LCD_SetBackgroundColor)
-  - format: [0x13][x][y][color_lo][color_hi][text...][0]
-  - LCD service time in slave: about 0.342 ms per character
-
-- LCD_SetBackgroundColor(color)
-  - color: RGB565
-  - format: [0x14][color_lo][color_hi]
-  - sets the global background color used by LCD_DrawText() and LCD_DrawMarker()
-
-- LCD_Indicator(index, state)
-  - index: [0 - RF, 1 - USB]
-  - state: [0 - off, 1 - on]
-  - format: [0x20][index][state]
-  - LCD service time in slave: about 0.166 ms
-
-- LCD_DrawProgressBar(index, value)
-  - index:
-    - 0 - RSSI RP
-    - 1 - RSSI RC
-    - 2 - Batt RP
-  - value: 0..64
-  - format: [0x21][index][value]
-  - LCD service time in slave: about 4.760 ms

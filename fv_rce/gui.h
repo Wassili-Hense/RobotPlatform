@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "hmi.h"
+#include "rio.h"
 #include "st7735.h"
 // -----------------------------------------------------------------------------
 // Section: Common
@@ -151,7 +151,7 @@ private:
 
 class GUIHotKeyComponent : public GUIComponent {
 public:
-    GUIHotKeyComponent(hmi_data_idx_t idx, gui_scene_t* targetScene);
+    GUIHotKeyComponent(rio_data_idx_t idx, gui_scene_t* targetScene);
 
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
@@ -160,7 +160,7 @@ public:
     void Exit(void) override;
 
 private:
-    hmi_data_idx_t m_idx;
+    rio_data_idx_t m_idx;
     gui_scene_t* m_targetScene;
 };
 
