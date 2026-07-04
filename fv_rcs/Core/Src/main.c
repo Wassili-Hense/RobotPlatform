@@ -21,7 +21,6 @@
 #include "adc.h"
 #include "dma.h"
 #include "i2c.h"
-#include "spi.h"
 #include "tim.h"
 #include "gpio.h"
 
@@ -94,7 +93,6 @@ int main(void)
   MX_TIM1_Init();
   MX_ADC_Init();
   MX_TIM14_Init();
-  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   App_Init();
   /* USER CODE END 2 */
