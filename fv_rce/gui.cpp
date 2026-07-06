@@ -67,10 +67,10 @@ void GUIClsComponent::Exit(void) {
 // -----------------------------------------------------------------------------
 
 namespace {
-static constexpr uint8_t GUI_J_VIEW_OUT_MIN_X = 45U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MAX_X = 114U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 10U;
-static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 79U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MIN_X = 48U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MAX_X = 111U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MIN_Y = 13U;
+static constexpr uint8_t GUI_J_VIEW_OUT_MAX_Y = 76U;
 
 static uint8_t GUIMapAxis(uint16_t value, uint8_t outMin, uint8_t outMax) {
   if (outMax <= outMin) return outMin;
@@ -124,14 +124,9 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axi
     m_axisY(axisY),
     m_currentX(0U),
     m_currentY(0U),
-    m_nextX(0U),
-    m_nextY(0U),
     m_visible(false),
-    m_pending(false),
     m_hasSample(false),
     m_trackCalLoaded(false),
-    m_rawX(0U),
-    m_rawY(0U),
     m_minX(0U),
     m_minY(0U),
     m_maxX(0U),
@@ -143,7 +138,7 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axi
 }
 
 void GUIJViewComponent::UpdateWindow(void) {
-  if ((m_axisX == nullptr) || (m_axisY == nullptr)) {
+  if ((m_axisX == nullptr) || (m_axisY == nullptr) || m_mode == GUI_J_VIEW_MODE_CAL_EDGE) {
     m_windowMinX = 0U;
     m_windowMaxX = 4095U;
     m_windowMinY = 0U;
@@ -220,51 +215,11 @@ bool GUIJViewComponent::SaveCalibration(void) {
   return true;
 }
 
-bool GUIJViewComponent::HandleButtons(void) {
-  if ((m_mode == GUI_J_VIEW_MODE_TRACK) || !rio_changed(RIO_DATA_BTN_OK) || (rio_get(RIO_DATA_BTN_OK) == 0U)) {
-    return false;
-  }
-  return SaveCalibration();
-}
-
-bool GUIJViewComponent::Update(void) {
-  const bool backlightOn = (rio_get(RIO_DATA_STAT_BL_ON) != 0U);
-  if (!backlightOn) {
-    m_pending = ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible);
-    return m_pending;
-  }
-
-  UpdateWindow();
-  m_rawX = rio_get(RIO_DATA_JOY_X);
-  m_rawY = rio_get(RIO_DATA_JOY_Y);
-
-  if (!m_hasSample) {
-    m_hasSample = true;
-    m_minX = m_maxX = m_rawX;
-    m_minY = m_maxY = m_rawY;
-  } else {
-    if (m_rawX < m_minX) m_minX = m_rawX;
-    if (m_rawX > m_maxX) m_maxX = m_rawX;
-    if (m_rawY < m_minY) m_minY = m_rawY;
-    if (m_rawY > m_maxY) m_maxY = m_rawY;
-  }
-
-  m_nextX = MapAxisX(m_rawX);
-  m_nextY = MapAxisY(m_rawY);
-  m_pending = (!m_visible || (m_currentX != m_nextX) || (m_currentY != m_nextY));
-  return m_pending;
-}
-
 void GUIJViewComponent::Enter(void) {
   m_currentX = 0U;
   m_currentY = 0U;
-  m_nextX = 0U;
-  m_nextY = 0U;
   m_visible = false;
-  m_pending = false;
   m_hasSample = false;
-  m_rawX = 0U;
-  m_rawY = 0U;
   m_minX = 0U;
   m_minY = 0U;
   m_maxX = 0U;
@@ -276,43 +231,55 @@ void GUIJViewComponent::Enter(void) {
 }
 
 void GUIJViewComponent::Process(void) {
-  if (HandleButtons()) return;
-  (void)Update();
+  if ((m_mode != GUI_J_VIEW_MODE_TRACK) && rio_changed(RIO_DATA_BTN_OK) && (rio_get(RIO_DATA_BTN_OK) != 0U)) {
+    SaveCalibration();
+  }
 }
 
 void GUIJViewComponent::Draw(void) {
-  if (!m_pending) return;
-
   const bool backlightOn = (rio_get(RIO_DATA_STAT_BL_ON) != 0U);
-  if (m_mode == GUI_J_VIEW_MODE_TRACK) {
-    if (m_visible) {
-      LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
-      m_visible = false;
+  uint16_t nextX, nextY;
+  if (backlightOn) {
+    UpdateWindow();
+    const uint16_t rawX = rio_get(RIO_DATA_JOY_X);
+    const uint16_t rawY = rio_get(RIO_DATA_JOY_Y);
+
+    if (!m_hasSample) {
+      m_hasSample = true;
+      m_minX = m_maxX = rawX;
+      m_minY = m_maxY = rawY;
+    } else {
+      if (rawX < m_minX) m_minX = rawX;
+      if (rawX > m_maxX) m_maxX = rawX;
+      if (rawY < m_minY) m_minY = rawY;
+      if (rawY > m_maxY) m_maxY = rawY;
     }
 
-    if (!backlightOn) {
-      m_pending = false;
-      return;
-    }
-  } else if (!backlightOn) {
-    m_pending = false;
-    return;
+    nextX = MapAxisX(rawX);
+    nextY = MapAxisY(rawY);
+    if(m_visible && (m_currentX == nextX) && (m_currentY == nextY)) return;
+  } else {
+    if(!m_visible) return;
   }
+
+  if (m_mode == GUI_J_VIEW_MODE_TRACK && m_visible) {
+    LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
+    m_visible = false;
+  }
+  if (!backlightOn) return;
 
   const uint8_t markerIndex = (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? 5U : 3U;
   const uint16_t markerColor = (m_mode == GUI_J_VIEW_MODE_TRACK)        ? GUI_COLOR_WHITE
                                : (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? GUI_COLOR_MAGENTA
                                                                         : GUI_COLOR_CYAN;
-  LCD_DrawMarker(m_nextX, m_nextY, markerIndex, markerColor);
+  LCD_DrawMarker(nextX, nextY, markerIndex, markerColor);
 
-  m_currentX = m_nextX;
-  m_currentY = m_nextY;
+  m_currentX = nextX;
+  m_currentY = nextY;
   m_visible = true;
-  m_pending = false;
 }
 
 void GUIJViewComponent::Exit(void) {
-  m_pending = false;
   m_visible = false;
 }
 

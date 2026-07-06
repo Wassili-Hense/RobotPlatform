@@ -103,8 +103,6 @@ public:
     void Exit(void) override;
 
 private:
-    bool Update(void);
-    bool HandleButtons(void);
     bool SaveCalibration(void);
     void UpdateWindow(void);
     uint8_t MapAxisX(uint16_t value) const;
@@ -116,14 +114,9 @@ private:
     gui_scene_t* m_targetScene;
     uint8_t m_currentX;
     uint8_t m_currentY;
-    uint8_t m_nextX;
-    uint8_t m_nextY;
     bool m_visible;
-    bool m_pending;
     bool m_hasSample;
     bool m_trackCalLoaded;
-    uint16_t m_rawX;
-    uint16_t m_rawY;
     uint16_t m_minX;
     uint16_t m_minY;
     uint16_t m_maxX;
