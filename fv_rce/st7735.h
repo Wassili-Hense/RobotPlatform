@@ -9,24 +9,17 @@
 extern "C" {
 #endif
 // Hardware
-#define LCD_SPI_HOST VSPI_HOST
-#define LCD_PIN_MOSI 23
-#define LCD_PIN_MISO -1
-#define LCD_PIN_SCLK 18
-#define LCD_PIN_CS   5
-#define LCD_PIN_DC   16
-#define LCD_PIN_RST  17
-#define LCD_SPI_CLOCK_HZ 24000000UL
-
 #define LCD_WIDTH   160U
 #define LCD_HEIGHT  80U
+#define LCD_MAX_TEXT_LEN      21U
 
 #define LCD_BLACK   0x0000U
 #define LCD_GRAY    0x4208U
 #define LCD_WHITE   0xFFFFU
 #define LCD_RED     0xF800U
-#define LCD_ORANGE  0xFD20U
+#define LCD_ORANGE  0xFC00U
 #define LCD_YELLOW  0xFFE0U
+#define LCD_CHARTREUSE  0x87E0
 #define LCD_GREEN   0x07E0U
 #define LCD_CYAN    0x07FFU
 #define LCD_BLUE    0x001FU

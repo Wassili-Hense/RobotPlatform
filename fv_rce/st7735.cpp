@@ -8,9 +8,17 @@
 #include <esp_arduino_version.h>
 #endif
 
+#define LCD_SPI_HOST VSPI_HOST
+#define LCD_PIN_MOSI 23
+#define LCD_PIN_MISO -1
+#define LCD_PIN_SCLK 18
+#define LCD_PIN_CS   5
+#define LCD_PIN_DC   16
+#define LCD_PIN_RST  17
+#define LCD_SPI_CLOCK_HZ 24000000UL
+
 #define ST7735_FONT_GLYPH_INDEX(ch) ((((uint8_t)(ch)) - FONT_FIRST_CHAR) * FONT_7X10_GLYPH_ROWS)
 #define ST7735_TEXT_CELL_WIDTH   (FONT_7X10_WIDTH + FONT_7X10_SPACING)
-#define ST7735_MAX_TEXT_LEN      21U
 #define ST7735_MARKER_COUNT      11U
 #define ST7735_X_OFFSET 0U
 #define ST7735_Y_OFFSET 24U
@@ -197,13 +205,10 @@ static uint8_t ST7735_FlushProcess(void) {
   }
 }
 
-static inline uint8_t ProgressBar_clamp(uint8_t v) { return (v > ProgressBar_PB_LEN) ? ProgressBar_PB_LEN : v; }
 static inline uint16_t ProgressBar_color_for_len(uint8_t v) {
-  if (v == 0U) return LCD_RED;
-  if (v >= ProgressBar_PB_LEN) return LCD_GREEN;
-  uint16_t t = (uint16_t)v;
-  uint16_t r5 = (uint16_t)((ProgressBar_PB_LEN - 1U - t) / 2U);
-  return (uint16_t)((r5 << 11) | (t << 5));
+  if (v < (uint8_t)(ProgressBar_PB_LEN / 3)) return LCD_RED;
+  if (v < (uint8_t)(ProgressBar_PB_LEN * 2 / 3)) return LCD_YELLOW;
+  return LCD_GREEN;
 }
 
 
@@ -262,7 +267,7 @@ void LCD_FillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
 void LCD_DrawText(uint8_t x, uint8_t y, uint16_t color, const char *text) {
   if (text == NULL) return;
   uint8_t cx = x, cy = y, minX = LCD_WIDTH, minY = LCD_HEIGHT, maxX = 0U, maxY = 0U, any = 0U;
-  for (uint8_t i = 0U; (i < ST7735_MAX_TEXT_LEN) && (text[i] != '\0'); i++) {
+  for (uint8_t i = 0U; (i < LCD_MAX_TEXT_LEN) && (text[i] != '\0'); i++) {
     char ch = text[i];
     if (ch == '\n') { cx = x; cy = (uint8_t)(cy + FONT_7X10_HEIGHT + FONT_7X10_HEIGHT / 2); continue; }
     if ((uint16_t)cx + ST7735_TEXT_CELL_WIDTH > LCD_WIDTH) { cx = x; cy = (uint8_t)(cy + FONT_7X10_HEIGHT); }
@@ -293,20 +298,26 @@ void LCD_DrawIndicator(uint8_t index, uint8_t value) {
 }
 void LCD_DrawProgressBar(uint8_t index, uint8_t value) {
   if (index >= 4U) return;
-  uint8_t v = ProgressBar_clamp(value);
-  if (v == s_progressBarPrev[index]) return;
+  if (value == s_progressBarPrev[index]) return;
+  if (value > ProgressBar_PB_LEN){
+    value = ProgressBar_PB_LEN;
+    if (value == s_progressBarPrev[index]) return;
+  }
 
   uint8_t x0 = s_progressBars[index].x0, y0 = s_progressBars[index].y0;
   uint16_t C1, C2;
-  if(v > (ProgressBar_PB_LEN / 2U)){
-    C1 = ProgressBar_color_for_len(v);
+  if(value > (ProgressBar_PB_LEN / 2U)){
+    C1 = ProgressBar_color_for_len(value);
     C2 = LCD_GRAY;
   } else {
     C1 = LCD_GRAY;
-    C2 = ProgressBar_color_for_len(v);
+    C2 = ProgressBar_color_for_len(value);
   }
-  if (v > 0U) LCD_FillRect(x0, y0, v, ProgressBar_PB_TH, C1);
-  x0 += v;
-  if (v < ProgressBar_PB_LEN) LCD_FillRect(x0, y0, (uint8_t)(ProgressBar_PB_LEN - v), ProgressBar_PB_TH, C2);
-  s_progressBarPrev[index] = v;
+  if (value > 0U){ 
+    LCD_FillRect(x0, y0, value, ProgressBar_PB_TH, C1);
+  }
+  if (value < ProgressBar_PB_LEN){ 
+    LCD_FillRect(x0 + value, y0, (uint8_t)(ProgressBar_PB_LEN - value), ProgressBar_PB_TH, C2);
+  }
+  s_progressBarPrev[index] = value;
 }

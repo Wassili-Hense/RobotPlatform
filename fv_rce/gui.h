@@ -198,10 +198,12 @@ private:
     uint16_t m_color;
     value_type_t m_type;
     const void* m_value;
-    char m_drawnText[24];
-    char m_nextText[24];
-    int32_t m_lastInt32;
-    float m_lastFloat;
+    char m_drawnText[LCD_MAX_TEXT_LEN + 1U];
+    char m_nextText[LCD_MAX_TEXT_LEN + 1U];
+    union {
+        int32_t i32;
+        float f32;
+    } m_lastValue;
     bool m_hasDrawn;
     bool m_pendingDraw;
 };

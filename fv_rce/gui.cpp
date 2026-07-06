@@ -358,8 +358,7 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int
     m_color(color),
     m_type(VALUE_INT32),
     m_value(value),
-    m_lastInt32(0),
-    m_lastFloat(0.0f),
+    m_lastValue{0},
     m_hasDrawn(false),
     m_pendingDraw(false) {
   m_drawnText[0] = '\0';
@@ -372,8 +371,7 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const flo
     m_color(color),
     m_type(VALUE_FLOAT),
     m_value(value),
-    m_lastInt32(0),
-    m_lastFloat(0.0f),
+    m_lastValue{0},
     m_hasDrawn(false),
     m_pendingDraw(false) {
   m_drawnText[0] = '\0';
@@ -386,8 +384,7 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_color(color),
     m_type(VALUE_CSTR),
     m_value(value),
-    m_lastInt32(0),
-    m_lastFloat(0.0f),
+    m_lastValue{0},
     m_hasDrawn(false),
     m_pendingDraw(false) {
   m_drawnText[0] = '\0';
@@ -400,8 +397,7 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* con
     m_color(color),
     m_type(VALUE_CSTR_PTR),
     m_value(value),
-    m_lastInt32(0),
-    m_lastFloat(0.0f),
+    m_lastValue{0},
     m_hasDrawn(false),
     m_pendingDraw(false) {
   m_drawnText[0] = '\0';
@@ -414,8 +410,7 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_color(color),
     m_type(VALUE_CSTR_PTR),
     m_value(value),
-    m_lastInt32(0),
-    m_lastFloat(0.0f),
+    m_lastValue{0},
     m_hasDrawn(false),
     m_pendingDraw(false) {
   m_drawnText[0] = '\0';
@@ -459,14 +454,14 @@ void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
 void GUIVarComponent::Enter(void) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
-  m_lastInt32 = 0;
-  m_lastFloat = 0.0f;
+  m_lastValue.i32 = 0;
+  m_lastValue.f32 = 0.0f;
 
   if (m_value != nullptr) {
     if (m_type == VALUE_INT32) {
-      m_lastInt32 = *static_cast<const int32_t*>(m_value);
+      m_lastValue.i32 = *static_cast<const int32_t*>(m_value);
     } else if (m_type == VALUE_FLOAT) {
-      m_lastFloat = *static_cast<const float*>(m_value);
+      m_lastValue.f32 = *static_cast<const float*>(m_value);
     }
   }
 
@@ -482,8 +477,8 @@ void GUIVarComponent::Process(void) {
       if (m_value == nullptr) return;
       {
         const int32_t value = *static_cast<const int32_t*>(m_value);
-        if (m_hasDrawn && (value == m_lastInt32)) return;
-        m_lastInt32 = value;
+        if (m_hasDrawn && (value == m_lastValue.i32)) return;
+        m_lastValue.i32 = value;
       }
       FormatValue(m_nextText, sizeof(m_nextText));
       m_pendingDraw = true;
@@ -493,8 +488,8 @@ void GUIVarComponent::Process(void) {
       if (m_value == nullptr) return;
       {
         const float value = *static_cast<const float*>(m_value);
-        if (m_hasDrawn && (value == m_lastFloat)) return;
-        m_lastFloat = value;
+        if (m_hasDrawn && (value == m_lastValue.f32)) return;
+        m_lastValue.f32 = value;
       }
       FormatValue(m_nextText, sizeof(m_nextText));
       m_pendingDraw = true;
@@ -641,6 +636,7 @@ void GUIMenuItemComponent::Enter(void) {
 
 void GUIMenuItemComponent::Process(void) {
   if (!m_prevActive) return;
+  // m_prevActive is used here to protect against repeated DOWN button handling.
 
   if (rio_changed(RIO_DATA_BTN_UP) && (rio_get(RIO_DATA_BTN_UP) != 0U)) {
     GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
@@ -662,7 +658,7 @@ void GUIMenuItemComponent::Process(void) {
 void GUIMenuItemComponent::Draw(void) {
   if (m_active == m_prevActive) return;
 
-  char text[32];
+  char text[LCD_MAX_TEXT_LEN + 1U];
   text[0] = m_active ? '>' : ' ';
   text[1] = ' ';
   if (m_text == nullptr) {
