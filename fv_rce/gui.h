@@ -90,12 +90,6 @@ enum gui_j_view_mode_t {
     GUI_J_VIEW_MODE_CAL_EDGE = 3
 };
 
-enum gui_j_view_phase_t {
-    GUI_J_VIEW_PHASE_IDLE = 0,
-    GUI_J_VIEW_PHASE_ERASE,
-    GUI_J_VIEW_PHASE_DRAW
-};
-
 class GUIJViewComponent : public GUIComponent {
 public:
     GUIJViewComponent(gui_j_view_mode_t mode,
@@ -138,7 +132,6 @@ private:
     uint16_t m_windowMaxX;
     uint16_t m_windowMinY;
     uint16_t m_windowMaxY;
-    gui_j_view_phase_t m_phase;
 };
 
 // -----------------------------------------------------------------------------

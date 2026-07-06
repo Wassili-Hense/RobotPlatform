@@ -139,8 +139,7 @@ GUIJViewComponent::GUIJViewComponent(gui_j_view_mode_t mode, gui_axis_cal_t* axi
     m_windowMinX(0U),
     m_windowMaxX(4095U),
     m_windowMinY(0U),
-    m_windowMaxY(4095U),
-    m_phase(GUI_J_VIEW_PHASE_IDLE) {
+    m_windowMaxY(4095U) {
 }
 
 void GUIJViewComponent::UpdateWindow(void) {
@@ -231,14 +230,8 @@ bool GUIJViewComponent::HandleButtons(void) {
 bool GUIJViewComponent::Update(void) {
   const bool backlightOn = (rio_get(RIO_DATA_STAT_BL_ON) != 0U);
   if (!backlightOn) {
-    if ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible) {
-      m_phase = GUI_J_VIEW_PHASE_ERASE;
-      m_pending = true;
-      return true;
-    }
-    m_phase = GUI_J_VIEW_PHASE_IDLE;
-    m_pending = false;
-    return false;
+    m_pending = ((m_mode == GUI_J_VIEW_MODE_TRACK) && m_visible);
+    return m_pending;
   }
 
   UpdateWindow();
@@ -258,33 +251,8 @@ bool GUIJViewComponent::Update(void) {
 
   m_nextX = MapAxisX(m_rawX);
   m_nextY = MapAxisY(m_rawY);
-
-  if (m_mode == GUI_J_VIEW_MODE_TRACK) {
-    if ((m_phase == GUI_J_VIEW_PHASE_DRAW) || (m_phase == GUI_J_VIEW_PHASE_ERASE)) return true;
-    if (!m_visible) {
-      m_phase = GUI_J_VIEW_PHASE_DRAW;
-      m_pending = true;
-      return true;
-    }
-    if ((m_currentX == m_nextX) && (m_currentY == m_nextY)) {
-      m_phase = GUI_J_VIEW_PHASE_IDLE;
-      m_pending = false;
-      return false;
-    }
-    m_phase = GUI_J_VIEW_PHASE_ERASE;
-    m_pending = true;
-    return true;
-  }
-
-  if (!m_visible || (m_currentX != m_nextX) || (m_currentY != m_nextY)) {
-    m_phase = GUI_J_VIEW_PHASE_DRAW;
-    m_pending = true;
-    return true;
-  }
-
-  m_phase = GUI_J_VIEW_PHASE_IDLE;
-  m_pending = false;
-  return false;
+  m_pending = (!m_visible || (m_currentX != m_nextX) || (m_currentY != m_nextY));
+  return m_pending;
 }
 
 void GUIJViewComponent::Enter(void) {
@@ -305,7 +273,6 @@ void GUIJViewComponent::Enter(void) {
     GUILoadCalibrationFromPreferences(m_axisX, m_axisY);
     m_trackCalLoaded = true;
   }
-  m_phase = GUI_J_VIEW_PHASE_IDLE;
 }
 
 void GUIJViewComponent::Process(void) {
@@ -316,48 +283,36 @@ void GUIJViewComponent::Process(void) {
 void GUIJViewComponent::Draw(void) {
   if (!m_pending) return;
 
-  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (m_phase == GUI_J_VIEW_PHASE_ERASE)) {
-    LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
-    {
+  const bool backlightOn = (rio_get(RIO_DATA_STAT_BL_ON) != 0U);
+  if (m_mode == GUI_J_VIEW_MODE_TRACK) {
+    if (m_visible) {
+      LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
       m_visible = false;
-      if ((rio_get(RIO_DATA_STAT_BL_ON) != 0U) && ((m_currentX != m_nextX) || (m_currentY != m_nextY))) {
-        m_phase = GUI_J_VIEW_PHASE_DRAW;
-      } else {
-        m_phase = GUI_J_VIEW_PHASE_IDLE;
-        m_pending = false;
-      }
     }
-    return;
-  }
 
-  if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (rio_get(RIO_DATA_STAT_BL_ON) == 0U)) {
-    m_phase = GUI_J_VIEW_PHASE_IDLE;
+    if (!backlightOn) {
+      m_pending = false;
+      return;
+    }
+  } else if (!backlightOn) {
     m_pending = false;
     return;
   }
 
-  if (m_phase == GUI_J_VIEW_PHASE_DRAW) {
-    const uint8_t markerIndex = (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? 5U : 3U;
-    const uint16_t markerColor = (m_mode == GUI_J_VIEW_MODE_TRACK)        ? GUI_COLOR_WHITE
-                                 : (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? GUI_COLOR_MAGENTA
-                                                                          : GUI_COLOR_CYAN;
-    LCD_DrawMarker(m_nextX, m_nextY, markerIndex, markerColor);
-    {
-      m_currentX = m_nextX;
-      m_currentY = m_nextY;
-      m_visible = true;
-      m_phase = GUI_J_VIEW_PHASE_IDLE;
-      m_pending = false;
-    }
-    return;
-  }
+  const uint8_t markerIndex = (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? 5U : 3U;
+  const uint16_t markerColor = (m_mode == GUI_J_VIEW_MODE_TRACK)        ? GUI_COLOR_WHITE
+                               : (m_mode == GUI_J_VIEW_MODE_CAL_CENTER) ? GUI_COLOR_MAGENTA
+                                                                        : GUI_COLOR_CYAN;
+  LCD_DrawMarker(m_nextX, m_nextY, markerIndex, markerColor);
 
-  return;
+  m_currentX = m_nextX;
+  m_currentY = m_nextY;
+  m_visible = true;
+  m_pending = false;
 }
 
 void GUIJViewComponent::Exit(void) {
   m_pending = false;
-  m_phase = GUI_J_VIEW_PHASE_IDLE;
   m_visible = false;
 }
 
