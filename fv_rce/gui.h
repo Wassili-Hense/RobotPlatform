@@ -225,20 +225,15 @@ public:
     void Exit(void) override;
 
     void SetActive(bool active);
+    bool IsActive(void);
 
 private:
-    friend GUIMenuItemComponent* GUIMenuFindActive(void);
-    void Draw(bool active);
-    bool ProcessNavigation(void);
-
-
     uint8_t m_x;
     uint8_t m_y;
     const char* m_text;
     gui_scene_t* m_targetScene;
     bool m_active;
     bool m_prevActive;
-    bool m_pending;
 };
 
 // -----------------------------------------------------------------------------

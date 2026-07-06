@@ -41,7 +41,7 @@ uint8_t GUIClsComponent::GetClassId(void) const {
 
 GUIClsComponent::GUIClsComponent(uint16_t color)
   : m_color(color),
-    m_pendingClear(false){
+    m_pendingClear(false) {
 }
 
 void GUIClsComponent::Enter(void) {
@@ -151,8 +151,8 @@ void GUIJViewComponent::UpdateWindow(void) {
     const uint16_t centerY = (uint16_t)(((uint32_t)m_axisY->cMin + (uint32_t)m_axisY->cMax) / 2U);
     const uint16_t widthX = (uint16_t)(((m_axisX->cMax >= m_axisX->cMin) ? (m_axisX->cMax - m_axisX->cMin) : 0U) * 2U);
     const uint16_t widthY = (uint16_t)(((m_axisY->cMax >= m_axisY->cMin) ? (m_axisY->cMax - m_axisY->cMin) : 0U) * 2U);
-    const uint16_t spanX = (widthX >= 70U) ? widthX : 70U;
-    const uint16_t spanY = (widthY >= 70U) ? widthY : 70U;
+    const uint16_t spanX = (widthX >= 64U) ? widthX : 64U;
+    const uint16_t spanY = (widthY >= 64U) ? widthY : 64U;
     const uint16_t halfX = (uint16_t)(spanX / 2U);
     const uint16_t halfY = (uint16_t)(spanY / 2U);
 
@@ -257,9 +257,9 @@ void GUIJViewComponent::Draw(void) {
 
     nextX = MapAxisX(rawX);
     nextY = MapAxisY(rawY);
-    if(m_visible && (m_currentX == nextX) && (m_currentY == nextY)) return;
+    if (m_visible && (m_currentX == nextX) && (m_currentY == nextY)) return;
   } else {
-    if(!m_visible) return;
+    if (!m_visible) return;
   }
 
   if (m_mode == GUI_J_VIEW_MODE_TRACK && m_visible) {
@@ -500,8 +500,7 @@ GUIMenuItemComponent::GUIMenuItemComponent(uint8_t x, uint8_t y, const char* tex
     m_text(text),
     m_targetScene(targetScene),
     m_active(false),
-    m_prevActive(false),
-    m_pending(false) {
+    m_prevActive(false) {
 }
 
 namespace {
@@ -554,7 +553,7 @@ GUIMenuItemComponent* GUIMenuFindActive(void) {
   if ((scene == nullptr) || (scene->components == nullptr)) return nullptr;
   for (size_t i = 0U; i < scene->componentCount; ++i) {
     GUIMenuItemComponent* item = GUIMenuItemCast(scene->components[i]);
-    if ((item != nullptr) && item->m_active) return item;
+    if ((item != nullptr) && item->IsActive()) return item;
   }
   return nullptr;
 }
@@ -562,15 +561,21 @@ GUIMenuItemComponent* GUIMenuFindActive(void) {
 void GUIMenuItemComponent::SetActive(bool active) {
   if (m_active != active) {
     m_active = active;
-    m_pending = true;
   }
 }
+bool GUIMenuItemComponent::IsActive(void){
+  return m_active;
+}
 
-bool GUIMenuItemComponent::ProcessNavigation(void) {
-  if (!m_prevActive) return false;
+void GUIMenuItemComponent::Enter(void) {
+  if ((GUIMenuFindActive() == nullptr) && (GUIMenuFindFirst() == this)) {
+    m_active = true;
+  }
+  m_prevActive = !m_active;  // redraw
+}
 
-  gui_scene_t* const scene = GUIGetActiveScene();
-  if (scene == nullptr) return false;
+void GUIMenuItemComponent::Process(void) {
+  if (!m_prevActive) return;
 
   if (rio_changed(RIO_DATA_BTN_UP) && (rio_get(RIO_DATA_BTN_UP) != 0U)) {
     GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, -1);
@@ -578,29 +583,22 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
       SetActive(false);
       next->SetActive(true);
     }
-    return false;
-  }
-
-  if (rio_changed(RIO_DATA_BTN_DOWN) && (rio_get(RIO_DATA_BTN_DOWN) != 0U)) {
+  } else if (rio_changed(RIO_DATA_BTN_DOWN) && (rio_get(RIO_DATA_BTN_DOWN) != 0U)) {
     GUIMenuItemComponent* next = GUIMenuFindAdjacent(this, 1);
     if ((next != nullptr) && (next != this)) {
       SetActive(false);
       next->SetActive(true);
     }
-    return false;
-  }
-
-  if (rio_changed(RIO_DATA_BTN_OK) && (rio_get(RIO_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
+  } else if (rio_changed(RIO_DATA_BTN_OK) && (rio_get(RIO_DATA_BTN_OK) != 0U) && (m_targetScene != nullptr)) {
     GUISwitchScene(m_targetScene);
-    return (GUIGetActiveScene() != scene);
   }
-
-  return false;
 }
 
-void GUIMenuItemComponent::Draw(bool active) {
+void GUIMenuItemComponent::Draw(void) {
+  if (m_active == m_prevActive) return;
+
   char text[32];
-  text[0] = active ? '>' : ' ';
+  text[0] = m_active ? '>' : ' ';
   text[1] = ' ';
   if (m_text == nullptr) {
     text[2] = '\0';
@@ -609,33 +607,12 @@ void GUIMenuItemComponent::Draw(bool active) {
     text[sizeof(text) - 1U] = '\0';
   }
 
-  const uint16_t color = active ? GUI_COLOR_WHITE : GUI_COLOR_GRAY;
+  const uint16_t color = m_active ? GUI_COLOR_WHITE : GUI_COLOR_GRAY;
   LCD_DrawText(m_x, m_y, color, text);
-  m_pending = false;
-}
-
-void GUIMenuItemComponent::Enter(void) {
-  if ((GUIMenuFindActive() == nullptr) && (GUIMenuFindFirst() == this)) {
-    m_active = true;
-  }
   m_prevActive = m_active;
-  m_pending = true;
-}
-
-void GUIMenuItemComponent::Process(void) {
-  if (m_active != m_prevActive) m_pending = true;
-  (void)ProcessNavigation();
-  m_prevActive = m_active;
-}
-
-void GUIMenuItemComponent::Draw(void) {
-  if (!m_pending) return;
-  Draw(m_active);
 }
 
 void GUIMenuItemComponent::Exit(void) {
-  m_pending = false;
-  m_prevActive = m_active;
 }
 
 // -----------------------------------------------------------------------------
@@ -743,7 +720,7 @@ void GUIBrightnessComponent::Process(void) {
 }
 
 void GUIBrightnessComponent::Draw(void) {
-  if ((m_mode == 1U) && m_pendingDraw){ 
+  if ((m_mode == 1U) && m_pendingDraw) {
     DrawValue();
   }
 }
