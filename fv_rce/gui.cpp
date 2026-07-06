@@ -358,8 +358,10 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const int
     m_color(color),
     m_type(VALUE_INT32),
     m_value(value),
+    m_lastInt32(0),
+    m_lastFloat(0.0f),
     m_hasDrawn(false),
-    m_phase(PHASE_IDLE) {
+    m_pendingDraw(false) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
 }
@@ -370,8 +372,10 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const flo
     m_color(color),
     m_type(VALUE_FLOAT),
     m_value(value),
+    m_lastInt32(0),
+    m_lastFloat(0.0f),
     m_hasDrawn(false),
-    m_phase(PHASE_IDLE) {
+    m_pendingDraw(false) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
 }
@@ -382,8 +386,10 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_color(color),
     m_type(VALUE_CSTR),
     m_value(value),
+    m_lastInt32(0),
+    m_lastFloat(0.0f),
     m_hasDrawn(false),
-    m_phase(PHASE_IDLE) {
+    m_pendingDraw(false) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
 }
@@ -394,8 +400,10 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, char* con
     m_color(color),
     m_type(VALUE_CSTR_PTR),
     m_value(value),
+    m_lastInt32(0),
+    m_lastFloat(0.0f),
     m_hasDrawn(false),
-    m_phase(PHASE_IDLE) {
+    m_pendingDraw(false) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
 }
@@ -406,14 +414,17 @@ GUIVarComponent::GUIVarComponent(uint8_t x, uint8_t y, uint16_t color, const cha
     m_color(color),
     m_type(VALUE_CSTR_PTR),
     m_value(value),
+    m_lastInt32(0),
+    m_lastFloat(0.0f),
     m_hasDrawn(false),
-    m_phase(PHASE_IDLE) {
+    m_pendingDraw(false) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
 }
 
 void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
   if ((out == nullptr) || (outSize == 0U)) return;
+
   out[0] = '\0';
   if (m_value == nullptr) return;
 
@@ -421,12 +432,15 @@ void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
     case VALUE_INT32:
       (void)snprintf(out, outSize, "%ld", (long)(*static_cast<const int32_t*>(m_value)));
       break;
+
     case VALUE_FLOAT:
       (void)snprintf(out, outSize, "%.2f", (double)(*static_cast<const float*>(m_value)));
       break;
+
     case VALUE_CSTR:
       (void)snprintf(out, outSize, "%s", static_cast<const char*>(m_value));
       break;
+
     case VALUE_CSTR_PTR:
       {
         const char* const* textPtr = static_cast<const char* const*>(m_value);
@@ -434,56 +448,107 @@ void GUIVarComponent::FormatValue(char* out, size_t outSize) const {
         (void)snprintf(out, outSize, "%s", (text != nullptr) ? text : "");
         break;
       }
+
     default:
       break;
   }
+
   out[outSize - 1U] = '\0';
 }
 
 void GUIVarComponent::Enter(void) {
   m_drawnText[0] = '\0';
   m_nextText[0] = '\0';
+  m_lastInt32 = 0;
+  m_lastFloat = 0.0f;
+
+  if (m_value != nullptr) {
+    if (m_type == VALUE_INT32) {
+      m_lastInt32 = *static_cast<const int32_t*>(m_value);
+    } else if (m_type == VALUE_FLOAT) {
+      m_lastFloat = *static_cast<const float*>(m_value);
+    }
+  }
+
   m_hasDrawn = false;
-  m_phase = PHASE_DRAW;
+  m_pendingDraw = true;
 }
 
 void GUIVarComponent::Process(void) {
-  if (m_phase != PHASE_IDLE) return;
+  if (m_pendingDraw) return;
 
-  char text[sizeof(m_nextText)];
-  FormatValue(text, sizeof(text));
-  if (!m_hasDrawn || (strcmp(text, m_drawnText) != 0)) {
-    (void)snprintf(m_nextText, sizeof(m_nextText), "%s", text);
-    m_nextText[sizeof(m_nextText) - 1U] = '\0';
-    m_phase = m_hasDrawn ? PHASE_ERASE : PHASE_DRAW;
+  switch (m_type) {
+    case VALUE_INT32:
+      if (m_value == nullptr) return;
+      {
+        const int32_t value = *static_cast<const int32_t*>(m_value);
+        if (m_hasDrawn && (value == m_lastInt32)) return;
+        m_lastInt32 = value;
+      }
+      FormatValue(m_nextText, sizeof(m_nextText));
+      m_pendingDraw = true;
+      break;
+
+    case VALUE_FLOAT:
+      if (m_value == nullptr) return;
+      {
+        const float value = *static_cast<const float*>(m_value);
+        if (m_hasDrawn && (value == m_lastFloat)) return;
+        m_lastFloat = value;
+      }
+      FormatValue(m_nextText, sizeof(m_nextText));
+      m_pendingDraw = true;
+      break;
+
+    case VALUE_CSTR:
+    case VALUE_CSTR_PTR:
+      {
+        char text[sizeof(m_nextText)];
+        FormatValue(text, sizeof(text));
+        if (!m_hasDrawn || (strcmp(text, m_drawnText) != 0)) {
+          (void)snprintf(m_nextText, sizeof(m_nextText), "%s", text);
+          m_nextText[sizeof(m_nextText) - 1U] = '\0';
+          m_pendingDraw = true;
+        }
+      }
+      break;
+
+    default:
+      break;
   }
 }
 
 void GUIVarComponent::Draw(void) {
-  if (m_phase == PHASE_IDLE) return;
+  if (!m_pendingDraw) return;
 
-  if (m_phase == PHASE_ERASE) {
-    LCD_DrawText(m_x, m_y, GUI_COLOR_BLACK, m_drawnText);
-    {
-      m_phase = PHASE_DRAW;
-    }
-    return;
-  }
-
-  if (!m_hasDrawn && (m_nextText[0] == '\0')) {
+  if (m_nextText[0] == '\0') {
     FormatValue(m_nextText, sizeof(m_nextText));
   }
-  LCD_DrawText(m_x, m_y, m_color, m_nextText);
-  {
-    (void)snprintf(m_drawnText, sizeof(m_drawnText), "%s", m_nextText);
-    m_drawnText[sizeof(m_drawnText) - 1U] = '\0';
-    m_hasDrawn = true;
-    m_phase = PHASE_IDLE;
+
+  char drawText[sizeof(m_nextText)];
+  (void)snprintf(drawText, sizeof(drawText), "%s", m_nextText);
+  drawText[sizeof(drawText) - 1U] = '\0';
+
+  const size_t nextLen = strlen(m_nextText);
+  const size_t drawnLen = strlen(m_drawnText);
+  if (drawnLen > nextLen) {
+    size_t i = nextLen;
+    while ((i < drawnLen) && (i < (sizeof(drawText) - 1U))) {
+      drawText[i++] = ' ';
+    }
+    drawText[i] = '\0';
   }
+
+  LCD_DrawText(m_x, m_y, m_color, drawText);
+
+  (void)snprintf(m_drawnText, sizeof(m_drawnText), "%s", m_nextText);
+  m_drawnText[sizeof(m_drawnText) - 1U] = '\0';
+  m_hasDrawn = true;
+  m_pendingDraw = false;
 }
 
 void GUIVarComponent::Exit(void) {
-  m_phase = PHASE_IDLE;
+  m_pendingDraw = false;
 }
 
 // -----------------------------------------------------------------------------

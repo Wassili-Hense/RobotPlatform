@@ -191,12 +191,6 @@ private:
         VALUE_CSTR,
         VALUE_CSTR_PTR
     };
-    enum phase_t : uint8_t {
-        PHASE_IDLE,
-        PHASE_ERASE,
-        PHASE_DRAW
-    };
-
     void FormatValue(char* out, size_t outSize) const;
 
     uint8_t m_x;
@@ -206,8 +200,10 @@ private:
     const void* m_value;
     char m_drawnText[24];
     char m_nextText[24];
+    int32_t m_lastInt32;
+    float m_lastFloat;
     bool m_hasDrawn;
-    phase_t m_phase;
+    bool m_pendingDraw;
 };
 
 // -----------------------------------------------------------------------------
