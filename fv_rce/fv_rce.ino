@@ -14,7 +14,7 @@
 #include "serial_bg.h"
 #include "pen_rc.h"
 
-#define MELODY 1
+//#define MELODY 1
 
 static gui_axis_cal_t s_axisCalX = { 226U, 1951U, 1959U, 4028U };
 static gui_axis_cal_t s_axisCalY = { 0U, 1953U, 1962U, 4027U };
@@ -393,15 +393,15 @@ static void AppProcessPenTx(void) {
 static void AppProcessHomePowerOff(void) {
   const uint32_t now = millis();
   static uint32_t lastActivityMs = now;
-  static int32_t prevRemSec = 301;
+  static int32_t prevRemSec = 91;
 
   if (GUIGetActiveScene() != &s_sceneHome || rio_get(RIO_DATA_BTN_ANYKEY) || pen_is_connected() || serial_bg_is_connected()) {
     lastActivityMs = now;
-    prevRemSec = 301;
+    prevRemSec = 91;
     return;
   }
   const uint32_t idleS = (uint32_t)(now - lastActivityMs) / 1000U;
-  const int32_t remainingS = 300L - (int32_t)idleS;
+  const int32_t remainingS = 90L - (int32_t)idleS;
   if(prevRemSec != remainingS){
     if (remainingS==6 || remainingS==4 || remainingS==2) {
       rio_cmd_play_tone(500U, 50U);

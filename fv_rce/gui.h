@@ -51,7 +51,7 @@ public:
     virtual uint8_t GetClassId(void) const = 0;
     virtual void Enter(void) = 0;
     virtual void Process(void) = 0;
-    virtual bool Send(void) = 0;
+    virtual void Draw(void) = 0;
     virtual void Exit(void) = 0;
 };
 
@@ -66,7 +66,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
 private:
@@ -105,7 +105,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
 private:
@@ -152,7 +152,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
 private:
@@ -171,7 +171,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
 private:
@@ -196,7 +196,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 private:
     enum value_type_t : uint8_t {
@@ -235,14 +235,14 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
     void SetActive(bool active);
 
 private:
     friend GUIMenuItemComponent* GUIMenuFindActive(void);
-    bool Draw(bool active);
+    void Draw(bool active);
     bool ProcessNavigation(void);
 
 
@@ -266,7 +266,7 @@ public:
     uint8_t GetClassId(void) const override;
     void Enter(void) override;
     void Process(void) override;
-    bool Send(void) override;
+    void Draw(void) override;
     void Exit(void) override;
 
 private:
@@ -274,7 +274,7 @@ private:
     static bool SaveStoredIndex(uint8_t index);
 
     bool ProcessInput(void);
-    bool DrawValue(void);
+    void DrawValue(void);
 
     uint8_t m_mode;
     uint8_t m_x;

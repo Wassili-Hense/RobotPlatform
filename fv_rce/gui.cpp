@@ -51,13 +51,11 @@ void GUIClsComponent::Enter(void) {
 void GUIClsComponent::Process(void) {
 }
 
-bool GUIClsComponent::Send(void) {
+void GUIClsComponent::Draw(void) {
   if (m_pendingClear) {
     LCD_Clear(m_color);
     m_pendingClear = false;
-    return true;
   }
-  return false;
 }
 
 void GUIClsComponent::Exit(void) {
@@ -315,8 +313,8 @@ void GUIJViewComponent::Process(void) {
   (void)Update();
 }
 
-bool GUIJViewComponent::Send(void) {
-  if (!m_pending) return false;
+void GUIJViewComponent::Draw(void) {
+  if (!m_pending) return;
 
   if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (m_phase == GUI_J_VIEW_PHASE_ERASE)) {
     LCD_DrawMarker(m_currentX, m_currentY, 3U, GUI_COLOR_BLACK);
@@ -329,13 +327,13 @@ bool GUIJViewComponent::Send(void) {
         m_pending = false;
       }
     }
-    return true;
+    return;
   }
 
   if ((m_mode == GUI_J_VIEW_MODE_TRACK) && (rio_get(RIO_DATA_STAT_BL_ON) == 0U)) {
     m_phase = GUI_J_VIEW_PHASE_IDLE;
     m_pending = false;
-    return false;
+    return;
   }
 
   if (m_phase == GUI_J_VIEW_PHASE_DRAW) {
@@ -351,10 +349,10 @@ bool GUIJViewComponent::Send(void) {
       m_phase = GUI_J_VIEW_PHASE_IDLE;
       m_pending = false;
     }
-    return true;
+    return;
   }
 
-  return false;
+  return;
 }
 
 void GUIJViewComponent::Exit(void) {
@@ -385,8 +383,7 @@ void GUIHotKeyComponent::Process(void) {
   }
 }
 
-bool GUIHotKeyComponent::Send(void) {
-  return false;
+void GUIHotKeyComponent::Draw(void) {
 }
 
 void GUIHotKeyComponent::Exit(void) {
@@ -415,14 +412,11 @@ void GUILabelComponent::Enter(void) {
 void GUILabelComponent::Process(void) {
 }
 
-bool GUILabelComponent::Send(void) {
-  if (!m_pending) return false;
+void GUILabelComponent::Draw(void) {
+  if (!m_pending) return;
 
   (void)LCD_DrawText(m_x, m_y, m_color, m_text);
-  {
-    m_pending = false;
-  }
-  return true;
+  m_pending = false;
 }
 
 void GUILabelComponent::Exit(void) {
@@ -543,15 +537,15 @@ void GUIVarComponent::Process(void) {
   }
 }
 
-bool GUIVarComponent::Send(void) {
-  if (m_phase == PHASE_IDLE) return false;
+void GUIVarComponent::Draw(void) {
+  if (m_phase == PHASE_IDLE) return;
 
   if (m_phase == PHASE_ERASE) {
     LCD_DrawText(m_x, m_y, GUI_COLOR_BLACK, m_drawnText);
     {
       m_phase = PHASE_DRAW;
     }
-    return true;
+    return;
   }
 
   if (!m_hasDrawn && (m_nextText[0] == '\0')) {
@@ -564,7 +558,6 @@ bool GUIVarComponent::Send(void) {
     m_hasDrawn = true;
     m_phase = PHASE_IDLE;
   }
-  return true;
 }
 
 void GUIVarComponent::Exit(void) {
@@ -683,7 +676,7 @@ bool GUIMenuItemComponent::ProcessNavigation(void) {
   return false;
 }
 
-bool GUIMenuItemComponent::Draw(bool active) {
+void GUIMenuItemComponent::Draw(bool active) {
   char text[32];
   text[0] = active ? '>' : ' ';
   text[1] = ' ';
@@ -696,10 +689,7 @@ bool GUIMenuItemComponent::Draw(bool active) {
 
   const uint16_t color = active ? GUI_COLOR_WHITE : GUI_COLOR_GRAY;
   LCD_DrawText(m_x, m_y, color, text);
-  {
-    m_pending = false;
-  }
-  return true;
+  m_pending = false;
 }
 
 void GUIMenuItemComponent::Enter(void) {
@@ -716,9 +706,9 @@ void GUIMenuItemComponent::Process(void) {
   m_prevActive = m_active;
 }
 
-bool GUIMenuItemComponent::Send(void) {
-  if (!m_pending) return false;
-  return Draw(m_active);
+void GUIMenuItemComponent::Draw(void) {
+  if (!m_pending) return;
+  Draw(m_active);
 }
 
 void GUIMenuItemComponent::Exit(void) {
@@ -790,16 +780,13 @@ bool GUIBrightnessComponent::SaveStoredIndex(uint8_t index) {
   return true;
 }
 
-bool GUIBrightnessComponent::DrawValue(void) {
+void GUIBrightnessComponent::DrawValue(void) {
   char text[4];
   (void)snprintf(text, sizeof(text), "%u", (unsigned)m_actualIndex);
   text[sizeof(text) - 1U] = '\0';
 
   (void)LCD_DrawText(m_x, m_y, GUI_COLOR_ORANGE, text);
-  {
-    m_pendingDraw = false;
-  }
-  return true;
+  m_pendingDraw = false;
 }
 
 bool GUIBrightnessComponent::ProcessInput(void) {
@@ -833,9 +820,10 @@ void GUIBrightnessComponent::Process(void) {
   (void)ProcessInput();
 }
 
-bool GUIBrightnessComponent::Send(void) {
-  if ((m_mode == 1U) && m_pendingDraw) return DrawValue();
-  return false;
+void GUIBrightnessComponent::Draw(void) {
+  if ((m_mode == 1U) && m_pendingDraw){ 
+    DrawValue();
+  }
 }
 
 void GUIBrightnessComponent::Exit(void) {
@@ -906,7 +894,7 @@ void GUIServiceActiveScene(void) {
     for (size_t i = 0U; i < scene->componentCount; ++i) {
       GUIComponent* component = scene->components[i];
       if (component == nullptr) continue;
-      component->Send();
+      component->Draw();
       if (s_guiActiveScene != scene) return;
     }
   }
