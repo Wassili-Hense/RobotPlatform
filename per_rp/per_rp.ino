@@ -50,7 +50,7 @@ static void SerialPrintVarI(uint32_t varId, int32_t value) {
 static void SerialPrintVarF(uint32_t varId, float value) {
   char name[5];
   VarIdToText(varId, name);
-  Serial.printf("%s %.4f\r\n", name, (double)value);
+  Serial.printf("%s %.5f\r\n", name, (double)value);
 }
 
 static void HandleLinkEvent(const pen_rx_event_t& ev) {

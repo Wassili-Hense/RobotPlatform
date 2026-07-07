@@ -11,7 +11,7 @@
 #include "rio.h"
 #include "gui.h"
 #include "st7735.h"
-#include "serial_bg.h"
+#include "usb.h"
 #include "pen_rc.h"
 
 //#define MELODY 1
@@ -76,19 +76,15 @@ static int32_t s_usbConnPen;
 
 // [Log]
 static void RioLogToSerial(const char* text, bool emergency) {
-  if (text == nullptr) return;
-  if (emergency && !serial_bg_is_connected()) {
-    serial_bg_set_connected(true);
+  if (emergency && !USBIsConnected()) {
+    USBSetConnect(true);
   }
-  if (!serial_bg_is_connected()) return;
-  (void)serial_bg_send_line(text);
+  USBSendStr(text);
 }
 
 
 static bool AppPcTxLine(const char* text) {
-  if ((text != nullptr) && serial_bg_is_connected()) {
-    (void)serial_bg_send_line(text);
-  }
+  USBSendStr(text);
   return true;
 }
 
@@ -382,7 +378,7 @@ static void AppProcessPenTx(void) {
     }
   }
 
-  const int32_t usbConnected = serial_bg_is_connected()?1:0;
+  const int32_t usbConnected = USBIsConnected()?1:0;
   if (usbConnected != s_usbConnPen) {
     (void)pen_send_state(PEN_VAR_USBC_APP, usbConnected);
     s_usbConnPen = usbConnected;
@@ -395,7 +391,7 @@ static void AppProcessHomePowerOff(void) {
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 91;
 
-  if (GUIGetActiveScene() != &s_sceneHome || rio_get(RIO_DATA_BTN_ANYKEY) || pen_is_connected() || serial_bg_is_connected()) {
+  if (GUIGetActiveScene() != &s_sceneHome || rio_get(RIO_DATA_BTN_ANYKEY) || pen_is_connected() || USBIsConnected()) {
     lastActivityMs = now;
     prevRemSec = 91;
     return;
@@ -415,7 +411,10 @@ static void AppProcessHomePowerOff(void) {
 }
 
 void setup() {
-  (void)serial_bg_begin(115200U, false, 1, 2, 4096U);
+  Serial.setDebugOutput(false);
+  Serial.end();  // For low-power disconnect, dropping the remaining TX bytes is intentional.
+  USBBegin(115200U);
+
   rio_init(RioLogToSerial);
 
   LCD_Init();
@@ -436,18 +435,18 @@ void setup() {
 }
 
 void loop() {
-  static TickType_t lastHmiTick = 0;
-  static char line[SERIAL_BG_LINE_CAP];
+  static uint32_t lastHmiMs = 0;
+  static char line[USB_RX_BUF_SIZE];
+  static pen_rx_event_t ev = {};
 
-  pen_rx_event_t ev = {};
-  TickType_t now = xTaskGetTickCount();
+  uint32_t now = millis();
 
-  if(now - lastHmiTick >= pdMS_TO_TICKS(5)){
-    lastHmiTick = now;
+  if(now - lastHmiMs >= 5){
+    lastHmiMs = now;
     if (rio_tick() == RIO_TICK_OK) {
       if (rio_changed(RIO_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
         const bool connected = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U);
-        serial_bg_set_connected(connected);
+        USBSetConnect(connected);
         GUISetIndicator(1U, connected);
       }
       AppProcessRioBattery();
@@ -461,7 +460,7 @@ void loop() {
   if(pen_receive(&ev)) {
     (void)AppPenRxEvent(&ev);
   }
-  if (serial_bg_receive_line(line, sizeof(line))) {
+  if (USBReadStr(line, sizeof(line))) {
     (void)pen_pc_rx_line(line);
   } 
   (void)LCD_Process();
