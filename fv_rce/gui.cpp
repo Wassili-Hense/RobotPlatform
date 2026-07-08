@@ -20,7 +20,7 @@ static gui_scene_t* s_guiActiveScene = nullptr;
 static gui_scene_t* s_guiHomeScene = nullptr;
 static uint32_t s_guiLastActivityMs = 0U;
 static constexpr uint32_t GUI_IDLE_HOME_TIMEOUT_MS = 65000U;
-static bool s_guiIndicatorValue[2] = { false, false };
+static uint8_t s_guiIndicatorValue[2] = { 0U, 0U };
 static bool s_guiIndicatorPending[2] = { true, true };
 static uint8_t s_guiProgressValue[4] = { 0U, 0U, 0U, 0U };
 }
@@ -860,7 +860,7 @@ void GUIServiceActiveScene(void) {
   }
   for (uint8_t i = 0U; i < 2U; ++i) {
     if (s_guiIndicatorPending[i]) {
-      (void)LCD_DrawIndicator(i, s_guiIndicatorValue[i] ? 1U : 0U);
+      (void)LCD_DrawIndicator(i, s_guiIndicatorValue[i]);
       s_guiIndicatorPending[i] = false;
     }
   }
@@ -869,7 +869,7 @@ void GUIServiceActiveScene(void) {
   }
 }
 
-void GUISetIndicator(uint8_t index, bool state) {
+void GUISetIndicator(uint8_t index, uint8_t state) {
   if (index >= 2U) return;
   if ((s_guiIndicatorValue[index] != state) || s_guiIndicatorPending[index]) {
     s_guiIndicatorValue[index] = state;

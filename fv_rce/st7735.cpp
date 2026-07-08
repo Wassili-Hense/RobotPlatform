@@ -294,7 +294,7 @@ void LCD_DrawMarker(uint8_t x, uint8_t y, uint8_t idx, uint16_t color) {
 }
 void LCD_DrawIndicator(uint8_t index, uint8_t value) {
   if (index == 0U) return LCD_DrawMarker(4U, 4U, 8U, value ? LCD_BLUE : LCD_GRAY);
-  if (index == 1U) return LCD_DrawMarker((uint8_t)(LCD_WIDTH - 4U), 4U, 10U, value ? LCD_BLUE : LCD_GRAY);
+  if (index == 1U) return LCD_DrawMarker((uint8_t)(LCD_WIDTH - 4U), 4U, 10U, value==0 ? LCD_GRAY : (value==1?LCD_BLUE:LCD_ORANGE));
 }
 void LCD_DrawProgressBar(uint8_t index, uint8_t value) {
   if (index >= 4U) return;

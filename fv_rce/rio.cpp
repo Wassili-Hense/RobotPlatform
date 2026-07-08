@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,6 +12,7 @@ static constexpr int I2C_SDA = 21;
 static constexpr int I2C_SCL = 22;
 static constexpr uint8_t I2C_READ_LEN = 8;
 static constexpr uint32_t I2C_WAIT_RETRY_MS = 50U;
+static constexpr uint8_t I2C_WAIT_MAX_ATTEMPTS = 5U;
 
 static constexpr uint8_t STATUS_BIT_USB_CONNECTED = 12;
 static constexpr uint8_t STATUS_BIT_BACKLIGHT_ON = 14;
@@ -69,100 +69,52 @@ static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
   return (data & ~(1UL << idx)) | (((uint32_t)(value & 1U)) << idx);
 }
 
-static void LogMessage(bool emergency, const char* fmt, ...) {
-  if ((s_logCallback == nullptr) || (fmt == nullptr)) return;
-  char buf[160];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
-  va_end(args);
-  s_logCallback(buf, emergency);
+static rio_result_t LogError(const char* funcName, rio_result_t result) {
+  if ((s_logCallback != nullptr) && (funcName != nullptr)) {
+    rio_log_event_t ev = {};
+    ev.result = result;
+    ev.data.error.funcName = funcName;
+    s_logCallback(&ev);
+  }
+  return result;
 }
 
-static void LogError(const char* funcName, const char* errName) {
-  if ((funcName == nullptr) || (errName == nullptr)) return;
-  LogMessage(false, "%s - %s", funcName, errName);
-}
-
+static void LogBytes(rio_result_t result, const uint8_t* data, uint8_t len) {
 #ifdef DEBUG_RIO
-static const char* ButtonNameFromIndex(uint8_t idx) {
-  switch (idx) {
-    case RIO_DATA_BTN_ON: return "ON";
-    case RIO_DATA_BTN_FIRE: return "FIRE";
-    case RIO_DATA_BTN_UP: return "UP";
-    case RIO_DATA_BTN_DOWN: return "DOWN";
-    case RIO_DATA_BTN_BACK: return "BACK";
-    case RIO_DATA_BTN_OK: return "OK";
-    case RIO_DATA_BTN_LUP: return "LUP";
-    case RIO_DATA_BTN_LDN: return "LDN";
-    case RIO_DATA_BTN_RUP: return "RUP";
-    case RIO_DATA_BTN_RDN: return "RDN";
-    default: return "NONE";
-  }
-}
+  if ((s_logCallback == nullptr) || (data == nullptr) || (len == 0U)) return;
+  if ((result != RIO_EVT_RX) && (result != RIO_EVT_TX)) return;
 
-static void LogStateIfChanged(void) {
-  if (s_changed == 0U) return;
-  const char* buttonName = "NONE";
-  for (uint8_t idx = (uint8_t)RIO_DATA_BTN_ON; idx <= (uint8_t)RIO_DATA_BTN_RDN; ++idx) {
-    if ((s_dataBits & (1UL << idx)) != 0UL) {
-      buttonName = ButtonNameFromIndex(idx);
-      break;
-    }
-  }
-  LogMessage(false,
-             "%1X %5u %5u %5u %s",
-             (unsigned int)(s_dataBits & 0x0FU),
-             (unsigned int)s_adcX,
-             (unsigned int)s_adcY,
-             (unsigned int)s_adcU,
-             buttonName);
-}
-
-static void LogTxBytes(const uint8_t* data, uint8_t len) {
-  if ((data == nullptr) || (len == 0U)) return;
-  char buf[160];
-  int pos = snprintf(buf, sizeof(buf), "TX");
-  for (uint8_t i = 0U; (i < len) && (pos >= 0) && (pos < (int)sizeof(buf)); ++i) {
-    pos += snprintf(&buf[pos], sizeof(buf) - (size_t)pos, " %02X", data[i]);
-  }
-  LogMessage(false, "%s", buf);
-}
-#else
-static void LogStateIfChanged(void) {}
-static void LogTxBytes(const uint8_t*, uint8_t) {}
+  rio_log_event_t ev = {};
+  ev.result = result;
+  ev.data.bytes.data = data;
+  ev.data.bytes.len = len;
+  s_logCallback(&ev);
 #endif
+}
 
 static bool WaitForI2cDevice(void) {
-  for (;;) {
+  for (uint8_t attempt = 0U; attempt < I2C_WAIT_MAX_ATTEMPTS; ++attempt) {
     Wire.beginTransmission(I2C_ADDR);
     const uint8_t rc = Wire.endTransmission(true);
     if (rc == 0U) return true;
-    LogError("rio_init", "I2C_WAIT");
-    delay(I2C_WAIT_RETRY_MS);
+    if ((attempt + 1U) < I2C_WAIT_MAX_ATTEMPTS) {
+      delay(I2C_WAIT_RETRY_MS);
+    }
   }
+  return false;
 }
 
-static rio_cmd_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len) {
-  if (!s_initialized) {
-    LogError(funcName, "NOT_INITIALIZED");
-    return RIO_CMD_ERR_NOT_INITIALIZED;
-  }
-  if ((data == nullptr) || (len == 0U) || (len > 32U)) {
-    LogError(funcName, "INVALID_ARG");
-    return RIO_CMD_ERR_INVALID_ARG;
-  }
+static rio_result_t SendCommand(const char* funcName, const uint8_t* data, uint8_t len) {
+  if (!s_initialized) return LogError(funcName, RIO_ERR_NOT_INITIALIZED);
+  if ((data == nullptr) || (len == 0U) || (len > 32U)) return LogError(funcName, RIO_ERR_INVALID_ARG);
 
   Wire.beginTransmission(I2C_ADDR);
   const size_t written = Wire.write(data, len);
   const uint8_t rc = Wire.endTransmission(true);
-  if ((rc != 0U) || (written != len)) {
-    LogError(funcName, "I2C_TX");
-    return RIO_CMD_ERR_I2C_TX;
-  }
+  if ((rc != 0U) || (written != len)) return LogError(funcName, RIO_ERR_I2C_TX);
 
-  LogTxBytes(data, len);
-  return RIO_CMD_OK;
+  LogBytes(RIO_EVT_TX, data, len);
+  return RIO_OK;
 }
 
 static uint16_t abs2(uint16_t a, uint16_t b) {
@@ -228,7 +180,7 @@ static void ClearSysCmd(rio_sys_cmd_type_t type) {
   }
 }
 
-void rio_init(rio_log_callback_t log_callback) {
+rio_result_t rio_init(rio_log_callback_t log_callback) {
   s_initialized = false;
   s_dataBits = 0U;
   s_changed = 0U;
@@ -237,51 +189,34 @@ void rio_init(rio_log_callback_t log_callback) {
   s_adcV = 0U;
   s_logCallback = log_callback;
 
-  if (!Wire.begin(I2C_SDA, I2C_SCL)) {
-    LogError("rio_init", "WIRE_BEGIN");
-    return;
-  }
-  if (!Wire.setClock(100000U)) {
-    LogError("rio_init", "WIRE_CLOCK");
-    return;
-  }
+  if (!Wire.begin(I2C_SDA, I2C_SCL)) return LogError("rio_init", RIO_ERR_WIRE_BEGIN);
+  if (!Wire.setClock(100000U)) return LogError("rio_init", RIO_ERR_WIRE_CLOCK);
   Wire.setTimeOut(10);
-  (void)WaitForI2cDevice();
+  if (!WaitForI2cDevice()) return LogError("rio_init", RIO_ERR_NOT_INITIALIZED);
   s_initialized = true;
+  return RIO_OK;
 }
 
-rio_tick_result_t rio_tick(void) {
-  if (!s_initialized) {
-    LogError("rio_tick", "NOT_INITIALIZED");
-    return RIO_TICK_ERR_NOT_INITIALIZED;
-  }
-
+rio_result_t rio_tick(void) {
+  if (!s_initialized) return LogError("rio_tick", RIO_ERR_NOT_INITIALIZED);
   uint8_t rx[I2C_READ_LEN];
   uint8_t len = 0U;
-  rio_tick_result_t result = RIO_TICK_OK;
+  rio_result_t result = RIO_OK;
 
   const int requested = Wire.requestFrom((int)I2C_ADDR, (int)I2C_READ_LEN, (int)true);
   if (requested != I2C_READ_LEN) {
-    LogError("rio_tick", "I2C_REQUEST");
-    result = (rio_tick_result_t)(result | RIO_TICK_ERR_I2C_REQUEST);
+    result = (rio_result_t)(result | LogError("rio_tick", RIO_ERR_I2C_REQUEST));
   }
-
   while (Wire.available() && (len < I2C_READ_LEN)) {
     rx[len++] = (uint8_t)Wire.read();
   }
-
   if (len != I2C_READ_LEN) {
-    LogError("rio_tick", "I2C_READ");
-    result = (rio_tick_result_t)(result | RIO_TICK_ERR_I2C_READ);
+    result = (rio_result_t)(result | LogError("rio_tick", RIO_ERR_I2C_READ));
   }
-
-  if (result != RIO_TICK_OK) {
-    return result;
-  }
-
+  if (result != RIO_OK) return result;
+  LogBytes(RIO_EVT_RX, rx, I2C_READ_LEN);
   ParsePacket(rx);
-  LogStateIfChanged();
-  return RIO_TICK_OK;
+  return RIO_OK;
 }
 
 uint16_t rio_get(rio_data_idx_t idx) {
@@ -301,7 +236,7 @@ void rio_sysSend(void) {
   const rio_sys_cmd_type_t type = FindNextSysCmd();
   if (type == RIO_SYS_CMD_COUNT) return;
 
-  rio_cmd_result_t rc = RIO_CMD_ERR_INVALID_ARG;
+  rio_result_t rc = RIO_ERR_INVALID_ARG;
   switch (type) {
     case RIO_SYS_CMD_BEEP: {
       uint8_t data[5];
@@ -343,46 +278,30 @@ void rio_sysSend(void) {
       return;
   }
 
-  if ((rc == RIO_CMD_OK) || (rc == RIO_CMD_ERR_INVALID_ARG)) ClearSysCmd(type);
+  if ((rc == RIO_OK) || (rc == RIO_ERR_INVALID_ARG)) ClearSysCmd(type);
 }
 
 void rio_cmd_set_backlight_timeout(uint32_t timeout_ms) {
-  if (!s_initialized) {
-    LogError("rio_cmd_set_backlight_timeout", "NOT_INITIALIZED");
-    return;
-  }
   s_sysBlTimeout.timeoutMs = timeout_ms;
   s_sysBlTimeout.hasData = true;
 }
 
 void rio_cmd_set_brightness(uint8_t level) {
-  if (!s_initialized) {
-    LogError("rio_cmd_set_brightness", "NOT_INITIALIZED");
-    return;
-  }
   s_sysBrightness.value = level;
   s_sysBrightness.hasData = true;
 }
 
 void rio_cmd_play_tone(uint16_t divider, uint16_t delay_ms) {
-  if (!s_initialized) {
-    LogError("rio_cmd_play_tone", "NOT_INITIALIZED");
-    return;
-  }
   s_sysBeep.divider = divider;
   s_sysBeep.delayMs = delay_ms;
   s_sysBeep.hasData = true;
 }
 
 void rio_cmd_play_melody(rio_melody_t melody) {
-  if (!s_initialized) {
-    LogError("rio_cmd_play_melody", "NOT_INITIALIZED");
-    return;
-  }
   if ((melody != RIO_MELODY_POWER_ON) &&
       (melody != RIO_MELODY_CONNECTED) &&
       (melody != RIO_MELODY_DISCONNECTED)) {
-    LogError("rio_cmd_play_melody", "INVALID_ARG");
+    (void)LogError("rio_melody", RIO_ERR_INVALID_ARG);
     return;
   }
   s_sysMelody.value = (uint8_t)melody;
@@ -390,9 +309,5 @@ void rio_cmd_play_melody(rio_melody_t melody) {
 }
 
 void rio_cmd_power_off(void) {
-  if (!s_initialized) {
-    LogError("rio_cmd_power_off", "NOT_INITIALIZED");
-    return;
-  }
   s_sysPowerOff = true;
 }

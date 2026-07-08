@@ -32,18 +32,18 @@ typedef enum {
 } rio_data_idx_t;
 
 typedef enum {
-    RIO_TICK_OK                  = 0x0000,
-    RIO_TICK_ERR_NOT_INITIALIZED = 0x0001,
-    RIO_TICK_ERR_I2C_REQUEST     = 0x0002,
-    RIO_TICK_ERR_I2C_READ        = 0x0004
-} rio_tick_result_t;
+    RIO_OK                  = 0x0000,
+    RIO_ERR_NOT_INITIALIZED = 0x0001,
+    RIO_ERR_INVALID_ARG     = 0x0002,
+    RIO_ERR_I2C_TX          = 0x0004,
+    RIO_ERR_I2C_REQUEST     = 0x0008,
+    RIO_ERR_I2C_READ        = 0x0010,
+    RIO_ERR_WIRE_BEGIN      = 0x0020,
+    RIO_ERR_WIRE_CLOCK      = 0x0040,
 
-typedef enum {
-    RIO_CMD_OK                  = 0,
-    RIO_CMD_ERR_NOT_INITIALIZED = 1,
-    RIO_CMD_ERR_INVALID_ARG     = 2,
-    RIO_CMD_ERR_I2C_TX          = 3
-} rio_cmd_result_t;
+    RIO_EVT_RX              = 0x0100,
+    RIO_EVT_TX              = 0x0200
+} rio_result_t;
 
 typedef enum {
     RIO_MELODY_POWER_ON     = 1,
@@ -51,10 +51,23 @@ typedef enum {
     RIO_MELODY_DISCONNECTED = 3
 } rio_melody_t;
 
-typedef void (*rio_log_callback_t)(const char *text, bool emergency);
+typedef struct {
+    rio_result_t result;
+    union {
+        struct {
+            const char *funcName;
+        } error;
+        struct {
+            const uint8_t *data;
+            uint8_t len;
+        } bytes;
+    } data;
+} rio_log_event_t;
 
-void rio_init(rio_log_callback_t log_callback);
-rio_tick_result_t rio_tick(void);
+typedef void (*rio_log_callback_t)(const rio_log_event_t *ev);
+
+rio_result_t rio_init(rio_log_callback_t log_callback);
+rio_result_t rio_tick(void);
 uint16_t rio_get(rio_data_idx_t idx);
 bool rio_changed(rio_data_idx_t idx);
 void rio_sysSend(void);

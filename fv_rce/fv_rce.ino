@@ -355,10 +355,12 @@ static void App_Rio2Gui(void) {
   if (rio_changed(RIO_DATA_ADC_V)) {
     GUISetProgress(3U, adc_to_soc(rio_get(RIO_DATA_ADC_V)));
   }
-  if (rio_changed(RIO_DATA_STAT_USB_CONN)) {
-    const bool connected = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U);
-    USBSetConnect(connected);
-    GUISetIndicator(1U, connected);
+  static int32_t s_lastRioUsbConn = -1;
+  const int32_t rioUsbConn = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U) ? 1 : 0;
+  if (rioUsbConn != s_lastRioUsbConn) {
+    USBSetConnect(rioUsbConn != 0);
+    GUISetIndicator(1U, rioUsbConn != 0);
+    s_lastRioUsbConn = rioUsbConn;
   }
 
 // Auto power off
@@ -385,19 +387,94 @@ static void App_Rio2Gui(void) {
   }
 }
 // [Log]
-static void RioLogToSerial(const char* text, bool emergency) {
-  if (emergency && !USBIsConnected()) {
-    USBSetConnect(true);
+static bool RioResultShouldForceUsb(rio_result_t result) {
+  return (result & (RIO_ERR_NOT_INITIALIZED | RIO_ERR_WIRE_BEGIN | RIO_ERR_WIRE_CLOCK | RIO_ERR_I2C_REQUEST | RIO_ERR_I2C_READ))!=0;
+}
+
+static void RioFormatResult(rio_result_t result, char* out, size_t outSize) {
+  if ((out == nullptr) || (outSize == 0U)) return;
+  out[0] = '\0';
+
+  switch(result){
+    case RIO_ERR_NOT_INITIALIZED:
+      snprintf(out, outSize, "NOT_INITIALIZED");
+      return;
+    case RIO_ERR_INVALID_ARG:
+      snprintf(out, outSize, "INVALID_ARG");
+      return;
+    case RIO_ERR_I2C_TX:
+      snprintf(out, outSize, "I2C_TX");
+      return;
+    case RIO_ERR_WIRE_BEGIN:
+      snprintf(out, outSize, "WIRE_BEGIN");
+      return;
+    case RIO_ERR_WIRE_CLOCK:
+      snprintf(out, outSize, "WIRE_CLOCK");
+      return;
+    case RIO_ERR_I2C_REQUEST:
+      snprintf(out, outSize, "I2C_REQ");
+      return;
+    case RIO_ERR_I2C_READ:
+      snprintf(out, outSize, "I2C_READ");
+      return;
+    case (RIO_ERR_I2C_REQUEST | RIO_ERR_I2C_READ):
+      snprintf(out, outSize, "I2C_REQ&READ");
+      return;
+    default:
+      snprintf(out, outSize, "UNKNOWN");
+      return;
   }
-  USBSendLine(text);
+}
+
+static void RioFormatBytes(const char* prefix, const uint8_t* data, uint8_t len) {
+  if ((prefix == nullptr) || (data == nullptr) || (len == 0U)) return;
+
+  char line[160];
+  int pos = snprintf(line, sizeof(line), "%s", prefix);
+  for (uint8_t i = 0U; (i < len) && (pos >= 0) && (pos < (int)sizeof(line)); ++i) {
+    pos += snprintf(&line[pos], sizeof(line) - (size_t)pos, " %02X", data[i]);
+  }
+  USBSendLine(line);
+}
+
+static void RioLogToSerial(const rio_log_event_t* ev) {
+  if (ev == nullptr) return;
+
+  switch (ev->result) {
+    case RIO_EVT_RX:
+      RioFormatBytes("RX", ev->data.bytes.data, ev->data.bytes.len);
+      break;
+
+    case RIO_EVT_TX:
+      RioFormatBytes("TX", ev->data.bytes.data, ev->data.bytes.len);
+      break;
+
+    default: {
+      if (RioResultShouldForceUsb(ev->result) && !USBIsConnected()) {
+        USBSetConnect(true);
+      }
+
+      char resultName[64];
+      char line[96];
+      RioFormatResult(ev->result, resultName, sizeof(resultName));
+      snprintf(line,
+               sizeof(line),
+               "%s - %s",
+               ev->data.error.funcName != nullptr ? ev->data.error.funcName : "rio",
+               resultName);
+      USBSendLine(line);
+      break;
+    }
+  }
 }
 
 void setup() {
   Serial.setDebugOutput(false);
   Serial.end();  // For low-power disconnect, dropping the remaining TX bytes is intentional.
   USBBegin(115200U);
+  USBSetConnect(true);
 
-  rio_init(RioLogToSerial);
+  (void)rio_init(RioLogToSerial);
 
   LCD_Init();
   LCD_FillRect(0U, 0U, LCD_WIDTH, 8U, LCD_BLACK);
@@ -426,10 +503,15 @@ void loop() {
 
   if(now - lastHmiMs >= 5){
     lastHmiMs = now;
-    if (rio_tick() == RIO_TICK_OK) {
+    const rio_result_t rioResult = rio_tick();
+    if (rioResult == RIO_OK) {
       AppProcessPenTx();
       App_Rio2Gui();
-      GUIServiceActiveScene();
+    } else {
+      GUISetIndicator(1U, 2);
+    }
+    GUIServiceActiveScene();
+    if (rioResult == RIO_OK) {
       rio_sysSend();
     }
   } 
