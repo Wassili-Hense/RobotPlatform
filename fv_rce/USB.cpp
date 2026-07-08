@@ -93,26 +93,17 @@ static size_t strLen8(const char *str) {
 }
 
 static void USBOnReceiveCb(void) {
-  if (!s_connected) {
-    // The port is logically disconnected. Drain the UART FIFO so that old bytes
-    // do not appear later after reconnecting.
-    while (Serial.available() > 0) {
-      (void)Serial.read();
-    }
-    return;
-  }
-
   while (Serial.available() > 0) {
     const int v = Serial.read();
     if (v < 0) break;
 
-    portENTER_CRITICAL(&s_lock);
-    const bool ok = rbPushLocked(&s_rx, (char)v);
-    portEXIT_CRITICAL(&s_lock);
-
-    // Drop bytes on RX overflow. The callback must stay short and must not wait.
-    (void)ok;
+    portENTER_CRITICAL_ISR(&s_lock);
+    if (s_connected) {
+      (void)rbPushLocked(&s_rx, (char)v);
+    }
+    portEXIT_CRITICAL_ISR(&s_lock);
   }
+
 }
 
 static bool txPopChunk(char *chunk, size_t cap, size_t *len) {
@@ -163,7 +154,8 @@ static void USBStartUart(void) {
   if (s_uartStarted) return;
 
   // timeout_ms = 0 keeps begin() from waiting for UART initialization timeouts.
-  Serial.begin(s_baud, SERIAL_8N1, -1, -1, false, 0UL);
+  Serial.begin(s_baud, SERIAL_8N1, -1, -1, false, 0UL, 1U);
+  Serial.setRxTimeout(4);
   Serial.onReceive(USBOnReceiveCb);
   s_uartStarted = true;
 }
@@ -171,15 +163,13 @@ static void USBStartUart(void) {
 static void USBStopUart(void) {
   if (!s_uartStarted) return;
 
-  // For low-power disconnect, dropping the remaining TX bytes is intentional.
-  Serial.end();
+  Serial.end();  // For low-power disconnect, dropping the remaining TX bytes is intentional.
   s_uartStarted = false;
 }
 
 void USBBegin(uint32_t baud) {
   s_baud = baud;
-  if (!s_txTask) {
-    xTaskCreatePinnedToCore(
+  xTaskCreatePinnedToCore(
       USBTxTask,
       "USB_Tx",
       USB_TX_TASK_STACK,
@@ -187,32 +177,26 @@ void USBBegin(uint32_t baud) {
       USB_TX_TASK_PRIO,
       &s_txTask,
       ARDUINO_RUNNING_CORE);
-  }
+  s_connected = true;
+  USBStartUart();
 }
 
 void USBSetConnect(bool connected) {
-  Serial.setDebugOutput(connected);
   if (connected) {
     portENTER_CRITICAL(&s_lock);
     s_connected = true;
     portEXIT_CRITICAL(&s_lock);
-
     USBStartUart();
-
-    if (s_txTask) {
-      xTaskNotifyGive(s_txTask);
-    }
-    return;
+    Serial.setDebugOutput(true);
+  } else {
+    Serial.setDebugOutput(false);
+    portENTER_CRITICAL(&s_lock);
+    s_connected = false;
+    rbClearLocked(&s_rx);
+    rbClearLocked(&s_tx);
+    portEXIT_CRITICAL(&s_lock);
+    USBStopUart();
   }
-
-  portENTER_CRITICAL(&s_lock);
-  s_connected = false;
-  rbClearLocked(&s_rx);
-  rbClearLocked(&s_tx);
-  portEXIT_CRITICAL(&s_lock);
-
-  USBStopUart();
-
   if (s_txTask) {
     xTaskNotifyGive(s_txTask);
   }

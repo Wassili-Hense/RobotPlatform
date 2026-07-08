@@ -469,10 +469,7 @@ static void RioLogToSerial(const rio_log_event_t* ev) {
 }
 
 void setup() {
-  Serial.setDebugOutput(false);
-  Serial.end();  // For low-power disconnect, dropping the remaining TX bytes is intentional.
   USBBegin(115200U);
-  USBSetConnect(true);
 
   (void)rio_init(RioLogToSerial);
 

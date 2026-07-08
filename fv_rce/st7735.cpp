@@ -306,7 +306,7 @@ void LCD_DrawProgressBar(uint8_t index, uint8_t value) {
 
   uint8_t x0 = s_progressBars[index].x0, y0 = s_progressBars[index].y0;
   uint16_t C1, C2;
-  if(value > (ProgressBar_PB_LEN / 2U)){
+  if(value >= (ProgressBar_PB_LEN / 2U)){
     C1 = ProgressBar_color_for_len(value);
     C2 = LCD_GRAY;
   } else {
