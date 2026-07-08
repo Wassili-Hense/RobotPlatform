@@ -70,9 +70,7 @@ static uint32_t set_bit(uint32_t data, uint8_t idx, uint8_t value) {
 }
 
 static void LogMessage(bool emergency, const char* fmt, ...) {
-  if ((s_logCallback == nullptr) || (fmt == nullptr)) {
-    return;
-  }
+  if ((s_logCallback == nullptr) || (fmt == nullptr)) return;
   char buf[160];
   va_list args;
   va_start(args, fmt);
@@ -82,9 +80,7 @@ static void LogMessage(bool emergency, const char* fmt, ...) {
 }
 
 static void LogError(const char* funcName, const char* errName) {
-  if ((funcName == nullptr) || (errName == nullptr)) {
-    return;
-  }
+  if ((funcName == nullptr) || (errName == nullptr)) return;
   LogMessage(false, "%s - %s", funcName, errName);
 }
 
@@ -106,9 +102,7 @@ static const char* ButtonNameFromIndex(uint8_t idx) {
 }
 
 static void LogStateIfChanged(void) {
-  if (s_changed == 0U) {
-    return;
-  }
+  if (s_changed == 0U) return;
   const char* buttonName = "NONE";
   for (uint8_t idx = (uint8_t)RIO_DATA_BTN_ON; idx <= (uint8_t)RIO_DATA_BTN_RDN; ++idx) {
     if ((s_dataBits & (1UL << idx)) != 0UL) {
@@ -126,9 +120,7 @@ static void LogStateIfChanged(void) {
 }
 
 static void LogTxBytes(const uint8_t* data, uint8_t len) {
-  if ((data == nullptr) || (len == 0U)) {
-    return;
-  }
+  if ((data == nullptr) || (len == 0U)) return;
   char buf[160];
   int pos = snprintf(buf, sizeof(buf), "TX");
   for (uint8_t i = 0U; (i < len) && (pos >= 0) && (pos < (int)sizeof(buf)); ++i) {
@@ -177,19 +169,10 @@ static uint16_t abs2(uint16_t a, uint16_t b) {
   return (a > b) ? (a - b) : (b - a);
 }
 
-static uint16_t ParseAdcWord(const uint8_t* rx, uint8_t offset) {
-  return (uint16_t)(((uint16_t)(rx[offset + 1U] & ADC_HI_MASK) << 8) | (uint16_t)rx[offset]);
-}
-
-static bool ParseAdcChanged(const uint8_t* rx, uint8_t offset) {
-  return ((rx[offset + 1U] & ADC_CHANGED_MASK) != 0U);
-}
-
-static void UpdateAdc(uint16_t value, bool changedFlag, uint16_t* storage, rio_data_idx_t idx) {
-  if (storage == nullptr) {
-    return;
-  }
-  if (changedFlag || (abs2(value, *storage) > 2U)) {
+static void UpdateAdc(const uint8_t* rx, uint8_t offset, uint16_t* storage, rio_data_idx_t idx) {
+  if (storage == nullptr) return;
+  uint16_t value = (uint16_t)(((uint16_t)(rx[offset + 1U] & ADC_HI_MASK) << 8) | (uint16_t)rx[offset]);
+  if (abs2(value, *storage) > 4U) {
     *storage = value;
     s_changed |= (1UL << (uint8_t)idx);
   }
@@ -197,9 +180,6 @@ static void UpdateAdc(uint16_t value, bool changedFlag, uint16_t* storage, rio_d
 
 static void ParsePacket(const uint8_t* rx) {
   const uint16_t word0 = (uint16_t)((uint16_t)rx[0] | ((uint16_t)rx[1] << 8));
-  const uint16_t adcX = ParseAdcWord(rx, 2U);
-  const uint16_t adcY = ParseAdcWord(rx, 4U);
-  const uint16_t adcV = ParseAdcWord(rx, 6U);
 
   uint32_t newBits = s_dataBits;
   newBits = set_bit(newBits, RIO_DATA_STAT_USB_CONN, (word0 & (1U << STATUS_BIT_USB_CONNECTED)) ? 1U : 0U);
@@ -211,9 +191,9 @@ static void ParsePacket(const uint8_t* rx) {
   newBits = set_bit(newBits, RIO_DATA_BTN_ANYKEY, (newButtons != 0U) ? 1U : 0U);
 
   s_changed = (s_dataBits ^ newBits);
-  UpdateAdc(adcX, ParseAdcChanged(rx, 2U), &s_adcX, RIO_DATA_JOY_X);
-  UpdateAdc(adcY, ParseAdcChanged(rx, 4U), &s_adcY, RIO_DATA_JOY_Y);
-  UpdateAdc(adcV, ParseAdcChanged(rx, 6U), &s_adcV, RIO_DATA_ADC_V);
+  UpdateAdc(rx, 2U, &s_adcX, RIO_DATA_JOY_X);
+  UpdateAdc(rx, 4U, &s_adcY, RIO_DATA_JOY_Y);
+  UpdateAdc(rx, 6U, &s_adcV, RIO_DATA_ADC_V);
   s_dataBits = newBits;
 }
 
@@ -379,9 +359,6 @@ void rio_cmd_set_brightness(uint8_t level) {
   if (!s_initialized) {
     LogError("rio_cmd_set_brightness", "NOT_INITIALIZED");
     return;
-  }
-  if (level > 127U) {
-    level = 127U;
   }
   s_sysBrightness.value = level;
   s_sysBrightness.hasData = true;

@@ -15,6 +15,9 @@
 #include <string.h>
 #include "freertos/task.h"
 
+#define PEN_LINK_TASK_PRIORITY 2
+#define PEN_LINK_TASK_STACK 4096U
+
 namespace {
 
 enum link_state_t : uint8_t {
@@ -989,7 +992,7 @@ bool pen_begin(void) {
   s_reportedFrameDropCount = 0U;
   s_reportedBadFrameCount = 0U;
   s_reportedAppDropCount = 0U;
-  if (xTaskCreatePinnedToCore(MainTask, "PEN", PEN_LINK_TASK_STACK, nullptr, PEN_LINK_TASK_PRIORITY, &s_mainTask, PEN_LINK_CORE_ID) != pdPASS) {
+  if (xTaskCreatePinnedToCore(MainTask, "PEN", PEN_LINK_TASK_STACK, nullptr, PEN_LINK_TASK_PRIORITY, &s_mainTask, ARDUINO_RUNNING_CORE) != pdPASS) {
     return false;
   }
   return true;

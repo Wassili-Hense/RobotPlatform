@@ -4,16 +4,6 @@
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"
 
-#ifndef PEN_LINK_CORE_ID
-#define PEN_LINK_CORE_ID 1
-#endif
-#ifndef PEN_LINK_TASK_PRIORITY
-#define PEN_LINK_TASK_PRIORITY 2
-#endif
-#ifndef PEN_LINK_TASK_STACK
-#define PEN_LINK_TASK_STACK 4096U
-#endif
-
 #define PEN_VAR_ID4(a, b, c, d) \
     ((uint32_t)(uint8_t)(a)        | \
     ((uint32_t)(uint8_t)(b) << 8)  | \

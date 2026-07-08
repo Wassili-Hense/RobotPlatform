@@ -16,8 +16,8 @@ extern "C" {
 void USBBegin(uint32_t baud);
 void USBSetConnect(bool connected);
 bool USBIsConnected(void);
-bool USBReadStr(char *str, size_t cap);
-void USBSendStr(const char *str);
+bool USBReadLine(char *str, size_t cap);
+void USBSendLine(const char *str);
 
 #ifdef __cplusplus
 }

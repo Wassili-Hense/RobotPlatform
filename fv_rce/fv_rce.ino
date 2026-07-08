@@ -74,64 +74,46 @@ static TaskHandle_t s_appTaskHandle = nullptr;
 static TaskHandle_t s_rxTaskHandle = nullptr;
 static int32_t s_usbConnPen;
 
-// [Log]
-static void RioLogToSerial(const char* text, bool emergency) {
-  if (emergency && !USBIsConnected()) {
-    USBSetConnect(true);
-  }
-  USBSendStr(text);
-}
-
-
-static bool AppPcTxLine(const char* text) {
-  USBSendStr(text);
-  return true;
-}
-
-
-static bool VarIdFromText(const char* text, uint32_t* outVarId) {
-  if ((text == nullptr) || (outVarId == nullptr)) return false;
+static uint32_t VarIdFromText(const char* text) {
+  if (text == nullptr) return 0UL;
   const size_t len = strlen(text);
-  if ((len == 0U) || (len > 4U)) return false;
+  if ((len == 0U) || (len > 4U)) return 0UL;
   uint8_t b[4] = { 0U, 0U, 0U, 0U };
   for (size_t i = 0; i < len; ++i) {
-    if (!isGraph((unsigned char)text[i])) return false;
+    if (!isGraph((unsigned char)text[i])) return 0UL;
     b[i] = (uint8_t)text[i];
   }
-  *outVarId = PEN_VAR_ID4(b[0], b[1], b[2], b[3]);
-  return true;
+  return PEN_VAR_ID4(b[0], b[1], b[2], b[3]);
 }
 
 static bool LooksFloat(const char* text) {
   return (text != nullptr) && ((strchr(text, '.') != nullptr) || (strchr(text, 'e') != nullptr) || (strchr(text, 'E') != nullptr));
 }
 
-static bool pen_pc_rx_line(const char* line) {
-  if (line == nullptr) return false;
-  char buf[32];
-  strncpy(buf, line, sizeof(buf) - 1U);
-  buf[sizeof(buf) - 1U] = '\0';
-
+static void App_usb2pen(char* line) {
+  if (line == nullptr) return;
   char* savePtr = nullptr;
-  char* varText = strtok_r(buf, " \t\r\n", &savePtr);
+  char* varText = strtok_r(line, " \t\r\n", &savePtr);
   char* valueText = strtok_r(nullptr, " \t\r\n", &savePtr);
-  if ((varText == nullptr) || (valueText == nullptr)) return false;
+  if ((varText == nullptr) || (valueText == nullptr)) return;
 
-  uint32_t varId = 0U;
-  if (!VarIdFromText(varText, &varId)) return false;
-  if (strcmp(valueText, "?") == 0) return pen_send_get_var(varId);
-
-  if (LooksFloat(valueText)) {
-    char* endPtr = nullptr;
-    const float value = strtof(valueText, &endPtr);
-    if ((endPtr == valueText) || (*endPtr != '\0')) return false;
-    return pen_send_state(varId, value);
-  }
+  uint32_t varId = VarIdFromText(varText);
+  if (varId == 0) return;
 
   char* endPtr = nullptr;
-  const long value = strtol(valueText, &endPtr, 10);
-  if ((endPtr == valueText) || (*endPtr != '\0') || (value < INT32_MIN) || (value > INT32_MAX)) return false;
-  return pen_send_state(varId, (int32_t)value);
+  if (strcmp(valueText, "?") == 0){
+    pen_send_get_var(varId);
+  } else if (LooksFloat(valueText)) {
+    const float value = strtof(valueText, &endPtr);
+    if ((endPtr != valueText) && (*endPtr == '\0')) {
+      pen_send_state(varId, value);
+    }
+  } else {
+    const long value = strtol(valueText, &endPtr, 10);
+    if ((endPtr != valueText) && (*endPtr == '\0') && (value >= INT32_MIN) && (value <= INT32_MAX)){
+      pen_send_state(varId, (int32_t)value);
+    }
+  }
 }
 
 static void AppFormatVarName(uint32_t varId, char out[5]) {
@@ -160,60 +142,13 @@ static float AppNormalizeAxis(uint16_t raw, const gui_axis_cal_t& cal) {
   return value;
 }
 
-
-/* -------------------------------------------------------------------------- */
-/* Progress bar / battery SOC                                                 */
-/* -------------------------------------------------------------------------- */
-/* Ubat = ADC_V * 0.00399446 - 0.19284 */
-/* Full battery: 4.10 V -> ADC = 1075 */
-static const uint16_t ocv_adc[] =
-  { 895, 919, 964, 985, 1010, 1020, 1027, 1035, 1047, 1055, 1060, 1067, 1075 };
-
-/* Progress bar range: 0..64 */
-static const uint8_t ocv_soc[] =
-  { 0, 4, 13, 19, 29, 32, 36, 39, 45, 49, 52, 58, 64 };
-
-#define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
-
-static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2) {
-  uint16_t dx = (uint16_t)(x2 - x1);
-  uint16_t num = (uint16_t)(x - x1);
-  uint16_t t = (uint16_t)((num << 8) / dx);
-  return (uint8_t)(y1 + ((((uint16_t)(y2 - y1)) * t) >> 8));
-}
-
-static uint8_t adc_to_soc(uint16_t adc) {
-  int low;
-  int high;
-
-  if (adc <= ocv_adc[0]) return ocv_soc[0];
-  if (adc >= ocv_adc[OCV_POINTS - 1U]) return ocv_soc[OCV_POINTS - 1U];
-
-  low = 0;
-  high = (int)OCV_POINTS - 1;
-  while ((high - low) > 1) {
-    int mid = (low + high) >> 1;
-    if (adc < ocv_adc[mid]) {
-      high = mid;
-    } else {
-      low = mid;
-    }
-  }
-  return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
-}
-
-static void AppProcessRioBattery(void) {
-  if (rio_changed(RIO_DATA_ADC_V)) {
-    GUISetProgress(3U, adc_to_soc(rio_get(RIO_DATA_ADC_V)));
-  }
-}
-
+// PEN2Usb
 static void AppEmitVarI(uint32_t varId, int32_t value) {
   char name[5];
   char line[32];
   AppFormatVarName(varId, name);
   snprintf(line, sizeof(line), "%s %ld", name, (long)value);
-  (void)AppPcTxLine(line);
+  USBSendLine(line);
 }
 
 static void AppEmitVarF(uint32_t varId, float value) {
@@ -221,7 +156,7 @@ static void AppEmitVarF(uint32_t varId, float value) {
   char line[32];
   AppFormatVarName(varId, name);
   snprintf(line, sizeof(line), "%s %.4f", name, (double)value);
-  (void)AppPcTxLine(line);
+  USBSendLine(line);
 }
 
 static void HandleVarI(const pen_rx_event_t& ev) {
@@ -256,7 +191,7 @@ static void HandleAck(const pen_rx_event_t& ev) {
   char line[32];
   AppFormatVarName(ev.data.ack.varId, name);
   snprintf(line, sizeof(line), "@ACK %s", name);
-  (void)AppPcTxLine(line);
+  USBSendLine(line);
 }
 
 static void HandleNack(const pen_rx_event_t& ev) {
@@ -264,33 +199,33 @@ static void HandleNack(const pen_rx_event_t& ev) {
   char line[32];
   AppFormatVarName(ev.data.nack.varId, name);
   snprintf(line, sizeof(line), "@NACK %s %u", name, (unsigned)ev.data.nack.reason);
-  (void)AppPcTxLine(line);
+  USBSendLine(line);
 }
 
 static void HandleLinkEvent(const pen_rx_event_t& ev) {
   switch (ev.data.link.code) {
     case PEN_LINK_READY: 
-      (void)AppPcTxLine("@LINK READY"); 
+      USBSendLine("@LINK READY"); 
       break;
     case PEN_LINK_DISC:
       {
         char line[32];
         snprintf(line, sizeof(line), "@DISC %d", (int)ev.data.link.rssi);
-        (void)AppPcTxLine(line);
+        USBSendLine(line);
         break;
       }
     case PEN_LINK_CONNECTED: 
-      (void)AppPcTxLine("@LINK CONNECTED"); 
+      USBSendLine("@LINK CONNECTED"); 
       break;
     case PEN_LINK_AUTH_OK: 
-      (void)AppPcTxLine("@LINK AUTH_OK"); 
+      USBSendLine("@LINK AUTH_OK"); 
       break;
     case PEN_LINK_SECURE:
 #ifdef MELODY 
       rio_cmd_play_melody(RIO_MELODY_CONNECTED);
 #endif
       GUISetIndicator(0U, true);
-      (void)AppPcTxLine("@LINK SECURE");
+      USBSendLine("@LINK SECURE");
       s_usbConnPen = -1;  // resend
       break;
     case PEN_LINK_LOST:
@@ -300,22 +235,22 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
       GUISetIndicator(0U, false);
       GUISetProgress(0U, 0U);
       GUISetProgress(1U, 0U);
-      (void)AppPcTxLine("@LINK LOST");
+      USBSendLine("@LINK LOST");
       break;
     case PEN_LINK_CONN_TO: 
-      (void)AppPcTxLine("@LINK CONN_TO"); 
+      USBSendLine("@LINK CONN_TO"); 
       break;
     case PEN_LINK_AUTH_TO: 
-      (void)AppPcTxLine("@LINK AUTH_TO"); 
+      USBSendLine("@LINK AUTH_TO"); 
       break;
     case PEN_LINK_MAC_BAD: 
-      (void)AppPcTxLine("@LINK MAC_BAD"); 
+      USBSendLine("@LINK MAC_BAD"); 
       break;
     case PEN_LINK_AUTH_BAD: 
-      (void)AppPcTxLine("@LINK AUTH_BAD"); 
+      USBSendLine("@LINK AUTH_BAD"); 
       break;
     case PEN_LINK_SEC_BAD: 
-      (void)AppPcTxLine("@LINK SEC_BAD"); 
+      USBSendLine("@LINK SEC_BAD"); 
       break;
     default: 
       break;
@@ -325,7 +260,7 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
 static void HandleErrorEvent(const pen_rx_event_t& ev) {
   char line[32];
   snprintf(line, sizeof(line), "@ERR %u %ld", (unsigned)ev.data.error.code, (long)ev.data.error.detail);
-  (void)AppPcTxLine(line);
+  USBSendLine(line);
   if (ev.data.error.code != PEN_HW_ERR_NONE) {
     char errText[8];
     snprintf(errText, sizeof(errText), "E%u", (unsigned)ev.data.error.code);
@@ -333,8 +268,8 @@ static void HandleErrorEvent(const pen_rx_event_t& ev) {
   }
 }
 
-static bool AppPenRxEvent(const pen_rx_event_t* ev) {
-  if (ev == nullptr) return false;
+static void AppPenRxEvent(const pen_rx_event_t* ev) {
+  if (ev == nullptr) return;
   switch (ev->type) {
     case PEN_RX_LINK: HandleLinkEvent(*ev); break;
     case PEN_RX_ERROR: HandleErrorEvent(*ev); break;
@@ -344,7 +279,6 @@ static bool AppPenRxEvent(const pen_rx_event_t* ev) {
     case PEN_RX_NACK: HandleNack(*ev); break;
     default: break;
   }
-  return true;
 }
 
 static void AppProcessPenTx(void) {
@@ -384,9 +318,50 @@ static void AppProcessPenTx(void) {
     s_usbConnPen = usbConnected;
   }
 }
+/* Progress bar / battery SOC                                                 */
+/* Ubat = ADC_V * 0.00399446 - 0.19284 */
+static const uint16_t ocv_adc[] = { 895, 919, 964, 985, 1010, 1020, 1027, 1035, 1047, 1055, 1060, 1067, 1075 };
+static const uint8_t ocv_soc[] =   { 0, 4, 13, 19, 29, 32, 36, 39, 45, 49, 52, 58, 64 }; /* Progress bar range: 0..64 */
+#define OCV_POINTS (sizeof(ocv_adc) / sizeof(ocv_adc[0]))
 
-// [Auto power off]
-static void AppProcessHomePowerOff(void) {
+static inline uint8_t interp_fast(uint16_t x, uint16_t x1, uint16_t x2, uint8_t y1, uint8_t y2) {
+  uint16_t dx = (uint16_t)(x2 - x1);
+  uint16_t num = (uint16_t)(x - x1);
+  uint16_t t = (uint16_t)((num << 8) / dx);
+  return (uint8_t)(y1 + ((((uint16_t)(y2 - y1)) * t) >> 8));
+}
+
+static uint8_t adc_to_soc(uint16_t adc) {
+  int low;
+  int high;
+
+  if (adc <= ocv_adc[0]) return ocv_soc[0];
+  if (adc >= ocv_adc[OCV_POINTS - 1U]) return ocv_soc[OCV_POINTS - 1U];
+
+  low = 0;
+  high = (int)OCV_POINTS - 1;
+  while ((high - low) > 1) {
+    int mid = (low + high) >> 1;
+    if (adc < ocv_adc[mid]) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+  return interp_fast(adc, ocv_adc[low], ocv_adc[high], ocv_soc[low], ocv_soc[high]);
+}
+
+static void App_Rio2Gui(void) {
+  if (rio_changed(RIO_DATA_ADC_V)) {
+    GUISetProgress(3U, adc_to_soc(rio_get(RIO_DATA_ADC_V)));
+  }
+  if (rio_changed(RIO_DATA_STAT_USB_CONN)) {
+    const bool connected = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U);
+    USBSetConnect(connected);
+    GUISetIndicator(1U, connected);
+  }
+
+// Auto power off
   const uint32_t now = millis();
   static uint32_t lastActivityMs = now;
   static int32_t prevRemSec = 91;
@@ -399,8 +374,8 @@ static void AppProcessHomePowerOff(void) {
   const uint32_t idleS = (uint32_t)(now - lastActivityMs) / 1000U;
   const int32_t remainingS = 90L - (int32_t)idleS;
   if(prevRemSec != remainingS){
-    if (remainingS==6 || remainingS==4 || remainingS==2) {
-      rio_cmd_play_tone(500U, 50U);
+    if (remainingS==5 || remainingS==3 || remainingS==2) {
+      rio_cmd_play_tone(400U, 25U);
     } else if (remainingS == 1) {
       rio_cmd_play_melody(RIO_MELODY_DISCONNECTED);
     } else if (remainingS <= 0) {
@@ -408,6 +383,13 @@ static void AppProcessHomePowerOff(void) {
     }
     prevRemSec = remainingS;
   }
+}
+// [Log]
+static void RioLogToSerial(const char* text, bool emergency) {
+  if (emergency && !USBIsConnected()) {
+    USBSetConnect(true);
+  }
+  USBSendLine(text);
 }
 
 void setup() {
@@ -424,6 +406,7 @@ void setup() {
   GUISetIndicator(1U, 0U);
 
   (void)pen_begin();
+
 #ifdef MELODY
   rio_cmd_play_melody(RIO_MELODY_POWER_ON);
 #else
@@ -444,25 +427,18 @@ void loop() {
   if(now - lastHmiMs >= 5){
     lastHmiMs = now;
     if (rio_tick() == RIO_TICK_OK) {
-      if (rio_changed(RIO_DATA_STAT_USB_CONN)) {  // Usb Connection Changed
-        const bool connected = (rio_get(RIO_DATA_STAT_USB_CONN) != 0U);
-        USBSetConnect(connected);
-        GUISetIndicator(1U, connected);
-      }
-      AppProcessRioBattery();
-      AppProcessHomePowerOff();
       AppProcessPenTx();
-      //GUI
-      (void)GUIServiceActiveScene();
+      App_Rio2Gui();
+      GUIServiceActiveScene();
       rio_sysSend();
     }
   } 
   if(pen_receive(&ev)) {
-    (void)AppPenRxEvent(&ev);
+    AppPenRxEvent(&ev);
   }
-  if (USBReadStr(line, sizeof(line))) {
-    (void)pen_pc_rx_line(line);
+  if (USBReadLine(line, sizeof(line))) {
+    App_usb2pen(line);
   } 
   (void)LCD_Process();
-  vTaskDelay(1);
+  taskYIELD();
 }
