@@ -154,6 +154,9 @@ static void RoleTick(uint32_t now);
 static bool RoleProcessEvent(const frame_evt_t& ev);
 static void RolePrepareHeartbeatItem(stream_cache_t& item);
 static bool RoleAfterQueueRxVarI(const pen_var_i_payload_t* p, const frame_evt_t& ev, bool retry);
+static bool RoleAfterQueueRxVarF(const pen_var_f_payload_t* p, const frame_evt_t& ev, bool retry);
+static bool RoleGetVarSupported(const pen_get_var_payload_t* p, const frame_evt_t& ev);
+static bool RoleSendGetVarValue(const pen_get_var_payload_t* p, const frame_evt_t& ev, bool retry);
 
 static uint8_t MsgBase(uint8_t t) {
   return t & PEN_MSG_TYPE_MASK;
@@ -790,11 +793,13 @@ static bool EmitVarF(uint8_t msgType, uint32_t varId, float value, bool retry) {
 static bool QueueRxVarI(const pen_var_i_payload_t* p, const frame_evt_t& ev, bool retry) {
   if (p == nullptr) return false;
   if (p->varId == PEN_VAR_HB) return true;
-  if (!EmitVarI(ev.msgType, p->varId, p->value, retry)) return false;
+  (void)EmitVarI(ev.msgType, p->varId, p->value, retry);
   return RoleAfterQueueRxVarI(p, ev, retry);
 }
 static bool QueueRxVarF(const pen_var_f_payload_t* p, const frame_evt_t& ev, bool retry) {
-  return (p != nullptr) && EmitVarF(ev.msgType, p->varId, p->value, retry);
+  if (p == nullptr) return false;
+  (void)EmitVarF(ev.msgType, p->varId, p->value, retry);
+  return RoleAfterQueueRxVarF(p, ev, retry);
 }
 static void HandleVarI(const frame_evt_t& ev) {
   const auto* p = reinterpret_cast<const pen_var_i_payload_t*>(Payload(ev));
@@ -857,19 +862,22 @@ static void HandleNack(const frame_evt_t& ev) {
 }
 static void HandleGetVar(const frame_evt_t& ev) {
   const auto* p = reinterpret_cast<const pen_get_var_payload_t*>(Payload(ev));
-  if (MsgRetry(ev.msgType) && RecentSeen(ev.msgType, ev.seq, p->varId)) {
-    (void)SendAckTo(ev.mac, ev.seq, p->varId);
+  const bool duplicate = MsgRetry(ev.msgType) && RecentSeen(ev.msgType, ev.seq, p->varId);
+
+  if (!RoleGetVarSupported(p, ev)) {
+    (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_UNSUPPORTED_VAR);
     return;
   }
+
   pen_rx_event_t out = {};
   out.type = PEN_RX_GET_VAR;
   out.msgType = MSG_GET_VAR;
   out.data.getVar.varId = p->varId;
-  if (QueueApp(out)) {
-    RecentRemember(ev.msgType, ev.seq, p->varId);
-    (void)SendAckTo(ev.mac, ev.seq, p->varId);
-  } else {
-    (void)SendNackTo(ev.mac, ev.seq, p->varId, PEN_NACK_BUSY);
+  (void)QueueApp(out);
+
+  if (!duplicate) RecentRemember(ev.msgType, ev.seq, p->varId);
+  if (SendAckTo(ev.mac, ev.seq, p->varId)) {
+    (void)RoleSendGetVarValue(p, ev, duplicate);
   }
 }
 

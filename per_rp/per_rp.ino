@@ -16,6 +16,22 @@ static constexpr size_t APP_LINE_CAP = 64U;
 static char s_line[APP_LINE_CAP];
 static size_t s_lineLen = 0U;
 
+static float s_joyX = 0.0F;
+static float s_joyY = 0.0F;
+static int32_t s_lset = 0;
+static int32_t s_rset = 0;
+static int32_t s_usbc = 0;
+
+// Test variables.
+static int32_t s_testStreamI = 0;
+static float s_testStreamF = 0.0F;
+static int32_t s_testStateI = 0;
+static float s_testStateF = 0.0F;
+
+static void RpEventI(uint32_t varId, int32_t value, bool retry);
+static void RpEventF(uint32_t varId, float value, bool retry);
+static bool RegisterRpVars(void);
+
 static bool VarIdFromText(const char* text, uint32_t* outVarId) {
   if ((text == nullptr) || (outVarId == nullptr)) return false;
   const size_t len = strlen(text);
@@ -52,6 +68,42 @@ static void SerialPrintVarF(uint32_t varId, float value) {
   VarIdToText(varId, name);
   Serial.printf("%s %.5f\r\n", name, (double)value);
 }
+
+static void RpEventI(uint32_t varId, int32_t value, bool retry) {
+  if (retry) return;
+  char name[5];
+  VarIdToText(varId, name);
+  Serial.printf("@EVT %s %ld\r\n", name, (long)value);
+}
+
+static void RpEventF(uint32_t varId, float value, bool retry) {
+  if (retry) return;
+  char name[5];
+  VarIdToText(varId, name);
+  Serial.printf("@EVT %s %.5f\r\n", name, (double)value);
+}
+
+static bool RegisterRpVars(void) {
+  bool ok = true;
+
+  ok = pen_rp_register_stream(PEN_VAR_ID2('J', 'X'), &s_joyX) && ok;
+  ok = pen_rp_register_stream(PEN_VAR_ID2('J', 'Y'), &s_joyY) && ok;
+
+  ok = pen_rp_register_state(PEN_VAR_ID4('L', 'S', 'E', 'T'), &s_lset) && ok;
+  ok = pen_rp_register_state(PEN_VAR_ID4('R', 'S', 'E', 'T'), &s_rset) && ok;
+  ok = pen_rp_register_state(PEN_VAR_ID4('U', 'S', 'B', 'C'), &s_usbc) && ok;
+
+  // Additional test bindings.
+  ok = pen_rp_register_stream(PEN_VAR_ID3('T', 'S', 'I'), &s_testStreamI) && ok;
+  ok = pen_rp_register_stream(PEN_VAR_ID3('T', 'S', 'F'), &s_testStreamF) && ok;
+  ok = pen_rp_register_state(PEN_VAR_ID3('S', 'T', 'I'), &s_testStateI) && ok;
+  ok = pen_rp_register_state(PEN_VAR_ID3('S', 'T', 'F'), &s_testStateF) && ok;
+  ok = pen_rp_register_event(PEN_VAR_ID3('E', 'V', 'I'), RpEventI) && ok;
+  ok = pen_rp_register_event(PEN_VAR_ID3('E', 'V', 'F'), RpEventF) && ok;
+
+  return ok;
+}
+
 
 static void HandleLinkEvent(const pen_rx_event_t& ev) {
   switch (ev.data.link.code) {
@@ -199,6 +251,9 @@ void setup() {
     delay(10);
   }
   Serial.println("@BOOT RP");
+  if (!RegisterRpVars()) {
+    Serial.println("@ERR RP_REG");
+  }
   (void)pen_begin();
 }
 
