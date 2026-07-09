@@ -5,12 +5,14 @@
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <Preferences.h>
 
 #define PEN_RC 0
 #include "pen_rp.h"
 
 static constexpr uint32_t APP_SERIAL_BAUD = 115200U;
 static constexpr uint16_t APP_STREAM_TTL_MS = 500U;
+static constexpr const char* APP_PREFS_NAMESPACE = "penrp";
 static constexpr size_t APP_LINE_CAP = 64U;
 
 static char s_line[APP_LINE_CAP];
@@ -20,16 +22,43 @@ static float s_joyX = 0.0F;
 static float s_joyY = 0.0F;
 static int32_t s_lset = 0;
 static int32_t s_rset = 0;
-static int32_t s_usbc = 0;
-
-// Test variables.
-static int32_t s_testStreamI = 0;
-static float s_testStreamF = 0.0F;
-static int32_t s_testStateI = 0;
-static float s_testStateF = 0.0F;
 
 static void RpEventI(uint32_t varId, int32_t value, bool retry);
 static void RpEventF(uint32_t varId, float value, bool retry);
+
+static bool RegisterStateI(Preferences& prefs, uint32_t varId, const char* key, int32_t* value) {
+  if ((key == nullptr) || (value == nullptr)) return false;
+  *value = prefs.getInt(key, *value);
+  return pen_rp_register_state(varId, value);
+}
+
+static bool RegisterStateF(Preferences& prefs, uint32_t varId, const char* key, float* value) {
+  if ((key == nullptr) || (value == nullptr)) return false;
+  *value = prefs.getFloat(key, *value);
+  return pen_rp_register_state(varId, value);
+}
+
+static bool SaveStateI(uint32_t varId, int32_t value) {
+  char key[5];
+  VarIdToText(varId, key);
+  Preferences prefs;
+  if (!prefs.begin(APP_PREFS_NAMESPACE, false)) return false;
+  const size_t written = prefs.putInt(key, value);
+  prefs.end();
+  if (written != 0U) Serial.printf("@SAVE %s\r\n", key);
+  return written != 0U;
+}
+
+static bool SaveStateF(uint32_t varId, float value) {
+  char key[5];
+  VarIdToText(varId, key);
+  Preferences prefs;
+  if (!prefs.begin(APP_PREFS_NAMESPACE, false)) return false;
+  const size_t written = prefs.putFloat(key, value);
+  prefs.end();
+  if (written != 0U) Serial.printf("@SAVE %s\r\n", key);
+  return written != 0U;
+}
 static bool RegisterRpVars(void);
 
 static bool VarIdFromText(const char* text, uint32_t* outVarId) {
@@ -76,30 +105,24 @@ static void RpEventI(uint32_t varId, int32_t value, bool retry) {
   Serial.printf("@EVT %s %ld\r\n", name, (long)value);
 }
 
-static void RpEventF(uint32_t varId, float value, bool retry) {
-  if (retry) return;
-  char name[5];
-  VarIdToText(varId, name);
-  Serial.printf("@EVT %s %.5f\r\n", name, (double)value);
-}
-
 static bool RegisterRpVars(void) {
   bool ok = true;
+  Preferences prefs;
+  const bool prefsOk = prefs.begin(APP_PREFS_NAMESPACE, false);
 
   ok = pen_rp_register_stream(PEN_VAR_ID2('J', 'X'), &s_joyX) && ok;
   ok = pen_rp_register_stream(PEN_VAR_ID2('J', 'Y'), &s_joyY) && ok;
 
-  ok = pen_rp_register_state(PEN_VAR_ID4('L', 'S', 'E', 'T'), &s_lset) && ok;
-  ok = pen_rp_register_state(PEN_VAR_ID4('R', 'S', 'E', 'T'), &s_rset) && ok;
-  ok = pen_rp_register_state(PEN_VAR_ID4('U', 'S', 'B', 'C'), &s_usbc) && ok;
-
-  // Additional test bindings.
-  ok = pen_rp_register_stream(PEN_VAR_ID3('T', 'S', 'I'), &s_testStreamI) && ok;
-  ok = pen_rp_register_stream(PEN_VAR_ID3('T', 'S', 'F'), &s_testStreamF) && ok;
-  ok = pen_rp_register_state(PEN_VAR_ID3('S', 'T', 'I'), &s_testStateI) && ok;
-  ok = pen_rp_register_state(PEN_VAR_ID3('S', 'T', 'F'), &s_testStateF) && ok;
-  ok = pen_rp_register_event(PEN_VAR_ID3('E', 'V', 'I'), RpEventI) && ok;
-  ok = pen_rp_register_event(PEN_VAR_ID3('E', 'V', 'F'), RpEventF) && ok;
+  if (prefsOk) {
+    ok = RegisterStateI(prefs, PEN_VAR_ID4('L', 'S', 'E', 'T'), "LSET", &s_lset) && ok;
+    ok = RegisterStateI(prefs, PEN_VAR_ID4('R', 'S', 'E', 'T'), "RSET", &s_rset) && ok;
+    prefs.end();
+  } else {
+    ok = pen_rp_register_state(PEN_VAR_ID4('L', 'S', 'E', 'T'), &s_lset) && ok;
+    ok = pen_rp_register_state(PEN_VAR_ID4('R', 'S', 'E', 'T'), &s_rset) && ok;
+  }
+  ok = pen_rp_register_event(PEN_VAR_ID4('U', 'S', 'B', 'C'), RpEventI) && ok;
+  ok = pen_rp_register_event(PEN_VAR_ID4('F', 'I', 'R', 'E'), RpEventI) && ok;
 
   return ok;
 }
@@ -182,6 +205,12 @@ static bool PenRxEvent(const pen_rx_event_t* ev) {
       break;
     case PEN_RX_VAR_F:
       if (!ev->data.varF.retry) SerialPrintVarF(ev->data.varF.varId, ev->data.varF.value);
+      break;
+    case PEN_RX_STATE_SAVE_I:
+      (void)SaveStateI(ev->data.varI.varId, ev->data.varI.value);
+      break;
+    case PEN_RX_STATE_SAVE_F:
+      (void)SaveStateF(ev->data.varF.varId, ev->data.varF.value);
       break;
     case PEN_RX_ACK:
       HandleAck(*ev);

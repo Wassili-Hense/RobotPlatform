@@ -4,6 +4,16 @@
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"
 
+#ifndef PEN_LINK_CORE_ID
+#define PEN_LINK_CORE_ID 1
+#endif
+#ifndef PEN_LINK_TASK_PRIORITY
+#define PEN_LINK_TASK_PRIORITY 2
+#endif
+#ifndef PEN_LINK_TASK_STACK
+#define PEN_LINK_TASK_STACK 4096U
+#endif
+
 #define PEN_VAR_ID4(a, b, c, d) \
     ((uint32_t)(uint8_t)(a)        | \
     ((uint32_t)(uint8_t)(b) << 8)  | \
@@ -13,7 +23,7 @@
 #define PEN_VAR_ID2(a, b)    PEN_VAR_ID4((a), (b), '\0', '\0')
 #define PEN_VAR_ID1(a)       PEN_VAR_ID4((a), '\0', '\0', '\0')
 
-enum pen_rx_type_t : uint8_t { PEN_RX_LINK = 1U, PEN_RX_ERROR = 2U, PEN_RX_VAR_I = 3U, PEN_RX_VAR_F = 4U, PEN_RX_ACK = 5U, PEN_RX_NACK = 6U, PEN_RX_GET_VAR = 7U };
+enum pen_rx_type_t : uint8_t { PEN_RX_LINK = 1U, PEN_RX_ERROR = 2U, PEN_RX_VAR_I = 3U, PEN_RX_VAR_F = 4U, PEN_RX_ACK = 5U, PEN_RX_NACK = 6U, PEN_RX_GET_VAR = 7U, PEN_RX_STATE_SAVE_I = 8U, PEN_RX_STATE_SAVE_F = 9U };
 enum pen_link_code_t : uint8_t { PEN_LINK_READY = 1U, PEN_LINK_DISC = 2U, PEN_LINK_CONNECTED = 3U, PEN_LINK_AUTH_OK = 4U, PEN_LINK_SECURE = 5U, PEN_LINK_LOST = 6U, PEN_LINK_CONN_TO = 7U, PEN_LINK_AUTH_TO = 8U, PEN_LINK_MAC_BAD = 9U, PEN_LINK_AUTH_BAD = 10U, PEN_LINK_SEC_BAD = 11U };
 enum pen_hw_error_t : uint8_t { PEN_HW_ERR_NONE = 0U, PEN_HW_ERR_EVENT_DROP = 1U, PEN_HW_ERR_BAD_FRAME = 2U, PEN_HW_ERR_SEND = 3U, PEN_HW_ERR_WIFI = 4U, PEN_HW_ERR_ESPNOW = 5U, PEN_HW_ERR_RETRY_FULL = 6U, PEN_HW_ERR_ACK_TIMEOUT = 7U, PEN_HW_ERR_RX_DROP = 8U };
 

@@ -69,6 +69,7 @@ static constexpr uint32_t PEN_VAR_BATP_APP = PEN_VAR_ID4('B', 'A', 'T', 'P');
 static constexpr uint32_t PEN_VAR_LSET_APP = PEN_VAR_ID4('L', 'S', 'E', 'T');
 static constexpr uint32_t PEN_VAR_RSET_APP = PEN_VAR_ID4('R', 'S', 'E', 'T');
 static constexpr uint32_t PEN_VAR_USBC_APP = PEN_VAR_ID4('U', 'S', 'B', 'C');
+static constexpr uint32_t PEN_VAR_FIRE_APP = PEN_VAR_ID4('F', 'I', 'R', 'E');
 
 static TaskHandle_t s_appTaskHandle = nullptr;
 static TaskHandle_t s_rxTaskHandle = nullptr;
@@ -164,6 +165,14 @@ static void HandleVarI(const pen_rx_event_t& ev) {
   const int32_t value = ev.data.varI.value;
   const bool retry = ev.data.varI.retry;
 
+  if (!retry) {
+    if (varId == PEN_VAR_LSET_APP) {
+      s_lset = value;
+    } else if (varId == PEN_VAR_RSET_APP) {
+      s_rset = value;
+    }
+  }
+
   if (varId == PEN_VAR_BATP_APP && !retry) {
     int32_t v = value*64/100;
     if (v < 0) v = 0;
@@ -227,6 +236,8 @@ static void HandleLinkEvent(const pen_rx_event_t& ev) {
       GUISetIndicator(0U, true);
       USBSendLine("@LINK SECURE");
       s_usbConnPen = -1;  // resend
+      (void)pen_send_get_var(PEN_VAR_LSET_APP);
+      (void)pen_send_get_var(PEN_VAR_RSET_APP);
       break;
     case PEN_LINK_LOST:
 #ifdef MELODY
@@ -292,6 +303,9 @@ static void AppProcessPenTx(void) {
     const float joyY = AppNormalizeAxis(rio_get(RIO_DATA_JOY_Y), s_axisCalY);
     (void)pen_send_stream(PEN_VAR_JY_APP, joyY, 500U);
   }
+  if (rio_changed(RIO_DATA_BTN_FIRE) && (rio_get(RIO_DATA_BTN_FIRE) != 0U)) {
+    (void)pen_send_event(PEN_VAR_FIRE_APP, 1L);
+  }
 
   if (GUIGetActiveScene() == &s_sceneHome) {
     if (rio_changed(RIO_DATA_BTN_LUP) && (rio_get(RIO_DATA_BTN_LUP) != 0U)) {
@@ -314,7 +328,7 @@ static void AppProcessPenTx(void) {
 
   const int32_t usbConnected = USBIsConnected()?1:0;
   if (usbConnected != s_usbConnPen) {
-    (void)pen_send_state(PEN_VAR_USBC_APP, usbConnected);
+    (void)pen_send_event(PEN_VAR_USBC_APP, usbConnected);
     s_usbConnPen = usbConnected;
   }
 }
